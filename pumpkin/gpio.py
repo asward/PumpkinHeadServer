@@ -72,7 +72,11 @@ class Outputs:
 
     def _make_pins(self):
         cfg = self.cfg
-        pins = [cfg.eyes_pin, cfg.mouth_pin] + ([cfg.mouth_close_pin] if self._hbridge else [])
+        pins = [cfg.eyes_pin, cfg.mouth_pin]
+        if self._hbridge:
+            pins.append(cfg.mouth_close_pin)
+            if cfg.mouth_enable_pin >= 0:
+                pins.append(cfg.mouth_enable_pin)
         if cfg.gpio_backend in ("auto", "lgpio"):
             try:
                 return _LgpioPins(cfg.gpio_chip, pins, cfg.active_high, cfg.eyes_pwm_hz)
@@ -104,7 +108,10 @@ class Outputs:
         if not self._hbridge:
             self._pins.write(self.cfg.mouth_pin, direction > 0)
             return
-        a, b = self.cfg.mouth_pin, self.cfg.mouth_close_pin
+        a, b, en = self.cfg.mouth_pin, self.cfg.mouth_close_pin, self.cfg.mouth_enable_pin
+        # Disable the bridge while the inputs change, and re-enable only once they're set.
+        if en >= 0:
+            self._pins.write(en, False)
         # Release the active input before raising the other so both are never high together.
         if direction > 0:
             self._pins.write(b, False)
@@ -115,6 +122,8 @@ class Outputs:
         else:
             self._pins.write(a, False)
             self._pins.write(b, False)
+        if en >= 0 and direction:
+            self._pins.write(en, True)
 
     def _stop_mouth(self) -> None:
         self._mouth_timer = None

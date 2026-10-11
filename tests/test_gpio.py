@@ -82,3 +82,59 @@ def test_hbridge_close_ms_zero_just_stops():
         out.set_mouth(False)
         assert rec.level == {22: False, 27: False}
     asyncio.run(run())
+
+
+class OrderRecorder(Recorder):
+    """Fails if an input pin changes while the enable pin (23) is high."""
+
+    def __init__(self):
+        super().__init__()
+        self.changed_while_enabled = False
+
+    def write(self, pin, on):
+        if pin != 23 and self.level.get(23) and self.level.get(pin) != on:
+            self.changed_while_enabled = True
+        super().write(pin, on)
+
+
+def test_hbridge_enable_pin():
+    async def run():
+        out = Outputs(Settings(gpio_backend="mock", mouth_driver="hbridge",
+                               mouth_enable_pin=23, mouth_close_ms=50), lambda *a: None)
+        out._pins = rec = OrderRecorder()
+        out.set_mouth(True)
+        assert rec.level == {22: False, 27: True, 23: True}
+        out.set_mouth(False)
+        assert rec.level == {22: True, 27: False, 23: True}
+        await asyncio.sleep(0.1)
+        assert rec.level == {22: False, 27: False, 23: False}
+        out.set_mouth(True)
+        out.close()
+        assert rec.level[23] is False
+        assert not rec.changed_while_enabled and not rec.both_high
+    asyncio.run(run())
+
+
+def test_enable_pin_claimed_only_for_hbridge():
+    assert 23 in _claimed(mouth_driver="hbridge", mouth_enable_pin=23)
+    assert 23 not in _claimed(mouth_enable_pin=23)
+    assert _claimed(mouth_driver="hbridge") == [17, 27, 22]
+
+
+def _claimed(**kw):
+    import pumpkin.gpio as g
+    seen = {}
+
+    class FakeLg:
+        name = "lgpio"
+
+        def __init__(self, chip, pins, active_high, hz):
+            seen["pins"] = pins
+
+    orig = g._LgpioPins
+    g._LgpioPins = FakeLg
+    try:
+        Outputs(Settings(gpio_backend="lgpio", **kw), lambda *a: None)
+    finally:
+        g._LgpioPins = orig
+    return seen["pins"]

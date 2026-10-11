@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     mouth_driver: str = "single"
     mouth_pin: int = 27
     mouth_close_pin: int = 22  # hbridge only
+    mouth_enable_pin: int = -1  # hbridge only: EN/ENA input, high only while driving. -1 = not wired (jumpered)
     mouth_close_ms: int = 150  # hbridge only: drive closed this long, then stop. 0 = just stop (coast)
     active_high: bool = True
     mouth_max_on_ms: int = 3000  # safety cut-off for the mouth motor, 0 = none
