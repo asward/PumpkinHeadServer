@@ -46,6 +46,8 @@ Data lives in `PUMPKIN_DATA_DIR` (`/data` in the container): `clips/*.wav` (dry 
 | Mouth motor (via driver/relay) | GPIO27 (pin 13), max on 3 s | `PUMPKIN_MOUTH_PIN`, `PUMPKIN_MOUTH_MAX_ON_MS` |
 | Mouth motor via H-bridge | open: GPIO27 (pin 13) → IN1, close: GPIO22 (pin 15) → IN2, closes for 150 ms | `PUMPKIN_MOUTH_DRIVER=hbridge`, `PUMPKIN_MOUTH_CLOSE_PIN`, `PUMPKIN_MOUTH_CLOSE_MS` |
 | H-bridge enable (optional) | off (jumpered); e.g. GPIO23 (pin 16) → EN/ENA, high only while driving | `PUMPKIN_MOUTH_ENABLE_PIN` |
+| Mouth flapping | off (holds open) | `PUMPKIN_MOUTH_FLAP_HZ`: while the mouth is on, open/close cycles per second |
+| Mouth limit switch (optional) | off; e.g. GPIO24 (pin 18), normally open to GND | `PUMPKIN_MOUTH_LIMIT_PIN`, `PUMPKIN_MOUTH_LIMIT_BACKOFF_CYCLES` |
 | Output polarity | active-high | `PUMPKIN_ACTIVE_HIGH` |
 | stepper4 board | `/dev/ttyACM0`, candy on M1, 200 steps at 800 sps | `PUMPKIN_SERIAL_PORT`, `PUMPKIN_CANDY_*` |
 | Camera | USB webcam on `/dev/video0`, 640x480 at 15 fps, MJPEG | `PUMPKIN_CAMERA_*` (`PUMPKIN_CAMERA_SOURCE=rpicam` for a Pi CSI camera) |
@@ -98,6 +100,7 @@ A sequence's **Voice** is the live voice-changer setting, a preset, or "as recor
 - **E-STOP** sends the board's real-time `!` halt, then latches `ESTOP` (drivers off) until **Reset E-stop**. It also stops playback and turns off autopilot.
 - The board's host watchdog (`WD`, 1 s by default) halts the motors if the server dies or the USB link drops.
 - The mouth output turns itself off after `PUMPKIN_MOUTH_MAX_ON_MS` so a stuck button can't stall the motor.
+- The mouth limit switch cuts the motor drive the moment it closes (the enable pin if wired). On an H-bridge the jaw then backs off the other way for `PUMPKIN_MOUTH_LIMIT_BACKOFF_CYCLES` flap cycles (or `PUMPKIN_MOUTH_CLOSE_MS` when not flapping) and stops. The mouth won't open again until the switch releases. E-STOP and stop-all halt the mouth in place.
 - Raw motor commands from the UI and sequences are limited to the spec's command set. `WD` is reserved for the server.
 
 ## Known limits
