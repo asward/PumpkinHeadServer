@@ -60,6 +60,7 @@ button { cursor: pointer; }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: .45; cursor: default; }
 button.on { background: var(--accent); color: #1a0d03; border-color: var(--accent); }
+button.limit { outline: 2px solid var(--bad); outline-offset: 2px; }
 button.big { padding: 12px; font-size: 16px; }
 button.danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 700; }
 button.candy { flex: 1; }

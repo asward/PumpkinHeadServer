@@ -102,6 +102,7 @@ function applyState(st) {
   $('#banner').classList.toggle('hidden', !notes.length);
   setOutput('eyes', st.outputs.eyes);
   setOutput('mouth', st.outputs.mouth);
+  setOutput('mouth_limit', st.outputs.mouth_limit);
   $('#btn-listen').disabled = !st.camera.audio;
   $('#btn-listen').title = st.camera.audio ? '' : 'No camera microphone configured (PUMPKIN_CAMERA_AUDIO_DEVICE)';
   $('#fx-preset').replaceChildren(
@@ -126,8 +127,11 @@ function setOutput(name, value) {
   if (name === 'eyes') {
     $('#btn-eyes').classList.toggle('on', value > 0);
     $('#btn-eyes').style.opacity = value > 0 ? 0.55 + value * 0.45 : '';
-  } else {
+  } else if (name === 'mouth') {
     $('#btn-mouth').classList.toggle('on', !!value);
+  } else if (name === 'mouth_limit') {
+    $('#btn-mouth').classList.toggle('limit', !!value);
+    $('#btn-mouth').title = value ? 'Mouth limit switch is pressed' : '';
   }
 }
 

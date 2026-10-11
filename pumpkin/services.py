@@ -76,7 +76,8 @@ class Services:
     def state(self) -> dict:
         st = self.stepper
         return {
-            "outputs": {"eyes": self.outputs.eyes, "mouth": self.outputs.mouth},
+            "outputs": {"eyes": self.outputs.eyes, "mouth": self.outputs.mouth,
+                        "mouth_limit": self.outputs.limit},
             "backends": {"gpio": self.outputs.backend, "audio": self.audio.backend},
             "stepper": {"enabled": st is not None, "connected": bool(st and st.connected),
                         "version": st.version if st else None, "estopped": self.estopped},
@@ -140,7 +141,7 @@ class Services:
     async def stop_all(self) -> None:
         await self.player.stop()
         self.audio.stop()
-        self.outputs.set_mouth(False, "safety")
+        self.outputs.halt()
 
     async def estop(self) -> None:
         st = self.stepper

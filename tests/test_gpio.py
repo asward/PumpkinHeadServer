@@ -138,3 +138,89 @@ def _claimed(**kw):
     finally:
         g._LgpioPins = orig
     return seen["pins"]
+
+
+def test_flap_alternates_open_and_closed():
+    async def run():
+        out, rec = make(mouth_driver="hbridge", mouth_flap_hz=10, mouth_close_ms=20)  # 50 ms halves
+        out.set_mouth(True)
+        assert rec.level == {22: False, 27: True}
+        await asyncio.sleep(0.07)
+        assert rec.level == {22: True, 27: False}
+        await asyncio.sleep(0.05)
+        assert rec.level == {22: False, 27: True}
+        out.set_mouth(False)
+        assert rec.level == {22: True, 27: False}
+        await asyncio.sleep(0.04)
+        assert rec.level == {22: False, 27: False}
+        await asyncio.sleep(0.1)
+        assert rec.level == {22: False, 27: False}  # flapping really stopped
+        assert not rec.both_high
+    asyncio.run(run())
+
+
+def test_flap_single_pin():
+    async def run():
+        out, rec = make(mouth_flap_hz=10)
+        out.set_mouth(True)
+        assert rec.level == {27: True}
+        await asyncio.sleep(0.07)
+        assert rec.level == {27: False}
+        await asyncio.sleep(0.05)
+        assert rec.level == {27: True}
+        out.set_mouth(False)
+        assert rec.level == {27: False}
+    asyncio.run(run())
+
+
+def test_limit_hit_cuts_enable_then_backs_off():
+    async def run():
+        changes = []
+        out = Outputs(Settings(gpio_backend="mock", mouth_driver="hbridge", mouth_enable_pin=23,
+                               mouth_flap_hz=100, mouth_limit_pin=24, mouth_limit_backoff_cycles=5),
+                      lambda *a: changes.append(a))
+        out._pins = rec = OrderRecorder()
+        out.set_mouth(True)                              # driving open
+        out._limit_from_thread(True)                     # switch thread: cut first
+        assert rec.level[23] is False
+        await asyncio.sleep(0)                           # loop handles the rest
+        assert out.limit and out.mouth is False
+        assert rec.level == {22: True, 27: False, 23: True}  # backing off: closing
+        assert ("mouth", 0.0, "safety") in changes and ("mouth_limit", 1.0, "safety") in changes
+        out.limit_changed(False)                         # switch releases mid back-off
+        await asyncio.sleep(0.07)                        # 5 cycles at 100 Hz = 50 ms
+        assert rec.level == {22: False, 27: False, 23: False}
+        assert not rec.changed_while_enabled and not rec.both_high
+    asyncio.run(run())
+
+
+def test_limit_pressed_blocks_opening_until_released():
+    async def run():
+        out, rec = make(mouth_driver="hbridge", mouth_limit_pin=24)
+        out.limit_changed(True)
+        out.set_mouth(True)
+        assert out.mouth is False and not rec.level.get(27)
+        out.limit_changed(False)
+        out.set_mouth(True)
+        assert out.mouth is True and rec.level[27] is True
+    asyncio.run(run())
+
+
+def test_limit_when_stopped_does_not_move():
+    async def run():
+        out, rec = make(mouth_driver="hbridge", mouth_limit_pin=24)
+        out.limit_changed(True)
+        await asyncio.sleep(0.2)
+        assert not rec.level.get(27) and not rec.level.get(22)
+    asyncio.run(run())
+
+
+def test_halt_stops_without_closing_move():
+    async def run():
+        out, rec = make(mouth_driver="hbridge", mouth_flap_hz=10)
+        out.set_mouth(True)
+        out.halt()
+        assert out.mouth is False and rec.level == {22: False, 27: False}
+        await asyncio.sleep(0.1)
+        assert rec.level == {22: False, 27: False}
+    asyncio.run(run())
