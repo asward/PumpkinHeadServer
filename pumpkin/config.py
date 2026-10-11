@@ -1,0 +1,49 @@
+"""Static, deploy-time configuration. Every field can be set with a PUMPKIN_<NAME> env var.
+
+Things the operator tunes at runtime (voice changer, lip-sync, autopilot) live in
+runtime.py instead, persisted to <data_dir>/settings.json.
+"""
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="PUMPKIN_", env_file=".env", extra="ignore")
+
+    data_dir: Path = Path("./data")
+    password: str = ""  # empty = no login
+
+    # stepper4 board. "mock" = built-in simulator, "" = no motors.
+    serial_port: str = "/dev/ttyACM0"
+    serial_baud: int = 115200
+    watchdog_ms: int = 1000
+    candy_motor: int = 1
+    candy_steps: int = 200
+    candy_speed: int = 800
+
+    # GPIO. backend: auto | lgpio | mock
+    gpio_backend: str = "auto"
+    gpio_chip: int = 0  # Pi 5 on kernels older than 6.6.45 uses 4
+    eyes_pin: int = 17
+    eyes_pwm: bool = True
+    eyes_pwm_hz: int = 200
+    mouth_pin: int = 27
+    active_high: bool = True
+    mouth_max_on_ms: int = 3000  # safety cut-off for the mouth motor, 0 = none
+
+    # Speaker. backend: auto | sounddevice | null
+    audio_backend: str = "auto"
+    audio_device: str = ""  # PortAudio name or index, "" = system default
+    sample_rate: int = 48000
+
+    # USB camera
+    camera_device: str = "/dev/video0"
+    camera_size: str = "640x480"
+    camera_fps: int = 15
+    camera_input_format: str = "mjpeg"  # mjpeg is passed through untouched; anything else is transcoded
+    camera_audio_device: str = ""  # ALSA name, e.g. plughw:CARD=Camera,DEV=0; "" = no listen-back
+    listen_rate: int = 16000
+
+
+settings = Settings()

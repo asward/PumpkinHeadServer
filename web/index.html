@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PumpkinHead</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎃</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>🎃 PumpkinHead</h1>
+  <div class="status">
+    <span id="st-server" class="pill">server</span>
+    <span id="st-motors" class="pill">motors</span>
+    <span id="st-play" class="pill">idle</span>
+  </div>
+  <div class="spacer"></div>
+  <label class="toggle"><input type="checkbox" id="ap-enabled"> Autopilot</label>
+  <button id="btn-stop" title="Stop sequence and audio (Esc)">Stop all</button>
+  <button id="btn-reset" class="hidden">Reset E-stop</button>
+  <button id="btn-estop" class="danger" title="Halt motors and latch (needs Reset)">E-STOP</button>
+</header>
+
+<div id="banner" class="banner hidden"></div>
+
+<main>
+<section class="col">
+
+  <div class="card">
+    <h2>Live</h2>
+    <div class="video">
+      <img id="video" alt="">
+      <div id="video-off">Camera off</div>
+    </div>
+    <div class="row">
+      <button id="btn-camera">Camera on</button>
+      <button id="btn-listen">Listen</button>
+      <button id="btn-mic">Enable mic</button>
+    </div>
+    <button id="btn-ptt" class="ptt" disabled>Hold to talk <kbd>Space</kbd></button>
+    <div class="row">
+      <meter id="mic-level" min="0" max="1" value="0"></meter>
+      <label class="toggle"><input type="checkbox" id="duck" checked> Mute listen while talking</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Puppet</h2>
+    <div class="grid2">
+      <button id="btn-eyes" class="big">Eyes <kbd>E</kbd></button>
+      <button id="btn-mouth" class="big">Mouth (hold) <kbd>M</kbd></button>
+    </div>
+    <label>Eye brightness <input type="range" id="eyes-level" min="0" max="1" step="0.05" value="1"></label>
+    <div class="row">
+      <button id="btn-dispense" class="big candy">🍬 Dispense <kbd>D</kbd></button>
+      <label>Count <input type="number" id="dispense-count" min="1" max="10" value="1" class="narrow"></label>
+    </div>
+    <h3>Lip-sync</h3>
+    <label class="toggle"><input type="checkbox" id="ls-enabled"> Move mouth with the voice</label>
+    <label>Sensitivity <input type="range" id="ls-threshold" min="0.005" max="0.2" step="0.005"></label>
+    <label>Max open (ms) <input type="range" id="ls-max-open" min="100" max="1500" step="50"></label>
+  </div>
+
+  <div class="card">
+    <h2>Voice changer</h2>
+    <label>Preset <select id="fx-preset"></select></label>
+    <div id="fx-sliders"></div>
+  </div>
+
+</section>
+<section class="col">
+
+  <div class="card">
+    <h2>Record a take</h2>
+    <p class="hint">Records your voice plus every eye, mouth, voice-line and candy action, and saves them as a new sequence.</p>
+    <div class="row">
+      <input id="rec-name" placeholder="name" value="take">
+      <label class="toggle"><input type="checkbox" id="rec-live" checked> Play through pumpkin</label>
+    </div>
+    <div class="row">
+      <button id="btn-rec" class="rec">● Record</button>
+      <button id="btn-rec-cancel" class="hidden">Discard</button>
+      <span id="rec-time" class="mono"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Voice lines</h2>
+    <ul id="clips" class="list"></ul>
+    <form id="upload" class="row">
+      <input type="file" id="upload-file" accept="audio/*">
+      <input id="upload-name" placeholder="name (optional)">
+      <button>Upload</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Sequences</h2>
+    <ul id="sequences" class="list"></ul>
+    <div class="row"><button id="btn-new-seq">New sequence</button></div>
+
+    <details id="gen">
+      <summary>Generate a sequence</summary>
+      <div class="row">
+        <label>Template <select id="gen-template"></select></label>
+        <label>Seconds <input type="number" id="gen-duration" value="10" min="1" max="600" class="narrow"></label>
+        <label>Seed <input type="number" id="gen-seed" placeholder="random" class="narrow"></label>
+      </div>
+      <label class="toggle"><input type="checkbox" id="gen-dispense"> Dispense candy at the end</label>
+      <div class="hint">Voice lines to choose from (none ticked = all):</div>
+      <div id="gen-clips" class="checks"></div>
+      <button id="btn-generate">Generate</button>
+    </details>
+
+    <div id="editor" class="hidden">
+      <h3>Editor</h3>
+      <div class="row">
+        <label>Name <input id="ed-name"></label>
+        <label>Voice <select id="ed-fx"></select></label>
+      </div>
+      <canvas id="timeline" height="132"></canvas>
+      <textarea id="ed-events" spellcheck="false" rows="12"></textarea>
+      <div class="hint">One event per line. Types: eyes (value 0-1), mouth (value 0/1), say (clip), dispense (count), motor (cmd).</div>
+      <div class="row">
+        <button id="ed-save">Save</button>
+        <button id="ed-play">Preview</button>
+        <button id="ed-close">Close</button>
+        <span id="ed-error" class="error"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Autopilot</h2>
+    <p class="hint">Plays the ticked sequences on its own while nobody is talking or playing anything.</p>
+    <div id="ap-sequences" class="checks"></div>
+    <div class="row">
+      <label>Gap (s) <input type="number" id="ap-min" min="0" class="narrow"> – <input type="number" id="ap-max" min="0" class="narrow"></label>
+      <label>Order <select id="ap-order"><option value="random">random</option><option value="cycle">in order</option></select></label>
+      <button id="ap-save">Save</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Motors</h2>
+    <table id="motors"><thead><tr><th>M</th><th>state</th><th>pos</th><th>queue</th><th>limit</th></tr></thead><tbody></tbody></table>
+    <div class="row">
+      <label>Motor <select id="jog-motor"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+      <label>Steps <input type="number" id="jog-steps" value="200" class="narrow"></label>
+      <label>Speed <input type="number" id="jog-speed" value="800" class="narrow"></label>
+    </div>
+    <div class="row">
+      <button id="jog-back">◀ Back</button>
+      <button id="jog-fwd">Forward ▶</button>
+      <button id="jog-stop">Stop</button>
+      <button id="jog-zero">Zero</button>
+    </div>
+    <form id="cmd" class="row">
+      <input id="cmd-line" placeholder="raw command, e.g. GOTO 1 0 500" class="grow">
+      <button>Send</button>
+    </form>
+    <pre id="motor-log"></pre>
+  </div>
+
+</section>
+</main>
+<div id="toasts"></div>
+<script src="app.js"></script>
+</body>
+</html>
