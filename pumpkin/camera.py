@@ -1,14 +1,20 @@
-"""USB camera video (MJPEG) and microphone (PCM) back to the browser, via ffmpeg.
+"""Camera video (MJPEG) and microphone (PCM) back to the browser.
 
-Each hub runs one ffmpeg process shared by all viewers, started on demand and stopped
-when the last viewer leaves. A camera that already outputs MJPEG is passed through
-without re-encoding, which keeps a Pi's CPU nearly idle.
+Each hub runs one capture process shared by all viewers, started on demand and stopped
+when the last viewer leaves. Video comes from either:
+
+- v4l2: a USB/UVC webcam read by ffmpeg. A camera that already outputs MJPEG is passed
+  through without re-encoding, which keeps a Pi's CPU nearly idle.
+- rpicam: a Raspberry Pi CSI (ribbon) camera read by rpicam-vid. On current Raspberry Pi
+  OS these cameras go through libcamera; their /dev/video* nodes carry raw sensor data
+  that ffmpeg's v4l2 input can't use.
 """
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import logging
+import os
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +38,13 @@ class VideoHub:
 
     def _cmd(self) -> list[str]:
         c = self.cfg
+        if c.camera_source == "rpicam":
+            width, height = c.camera_size.lower().split("x")
+            # --verbose 0: no per-frame status on stderr (stderr is only read after exit,
+            # so chatty output would fill the pipe and stall capture).
+            return ["rpicam-vid", "--nopreview", "--verbose", "0", "--timeout", "0",
+                    "--codec", "mjpeg", "--width", width, "--height", height,
+                    "--framerate", str(c.camera_fps), "--output", "-"]
         cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error",
                "-f", "v4l2", "-input_format", c.camera_input_format,
                "-video_size", c.camera_size, "-framerate", str(c.camera_fps),
@@ -69,12 +82,15 @@ class VideoHub:
                 self._cond.notify_all()  # wake viewers so they notice capture ended
 
     async def _capture(self) -> None:
+        cmd = self._cmd()
+        # Keep libcamera's INFO logging off stderr for the same reason as --verbose 0.
+        env = {**os.environ, "LIBCAMERA_LOG_LEVELS": os.environ.get("LIBCAMERA_LOG_LEVELS", "*:ERROR")}
         while self._viewers > 0:
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    *self._cmd(), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env)
             except FileNotFoundError:
-                self.error = "ffmpeg not installed"
+                self.error = f"{cmd[0]} not installed"
                 log.warning("camera: %s", self.error)
                 return
             try:
@@ -85,7 +101,7 @@ class VideoHub:
                     err = (await proc.stderr.read()).decode(errors="replace").strip()
                     if err:
                         self.error = err.splitlines()[-1]
-                        log.warning("camera ffmpeg: %s", self.error)
+                        log.warning("camera %s: %s", cmd[0], self.error)
             if self._viewers > 0:
                 await asyncio.sleep(2)
 

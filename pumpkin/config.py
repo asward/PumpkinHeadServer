@@ -37,11 +37,12 @@ class Settings(BaseSettings):
     audio_device: str = ""  # PortAudio name or index, "" = system default
     sample_rate: int = 48000
 
-    # USB camera
-    camera_device: str = "/dev/video0"
+    # Camera. source: v4l2 (USB/UVC webcam via ffmpeg) | rpicam (Pi CSI camera via rpicam-vid)
+    camera_source: str = "v4l2"
+    camera_device: str = "/dev/video0"  # v4l2 only
     camera_size: str = "640x480"
     camera_fps: int = 15
-    camera_input_format: str = "mjpeg"  # mjpeg is passed through untouched; anything else is transcoded
+    camera_input_format: str = "mjpeg"  # v4l2 only: mjpeg is passed through untouched; anything else is transcoded
     camera_audio_device: str = ""  # ALSA name, e.g. plughw:CARD=Camera,DEV=0; "" = no listen-back
     listen_rate: int = 16000
 

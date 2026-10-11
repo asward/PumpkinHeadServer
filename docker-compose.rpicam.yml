@@ -1,0 +1,12 @@
+# Override for a Raspberry Pi CSI (ribbon) camera. Enable it in .env with
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.rpicam.yml
+#   PUMPKIN_CAMERA_SOURCE=rpicam
+#
+# libcamera opens a set of /dev/media*, /dev/video* and /dev/dma_heap/* nodes whose
+# numbers vary by board and kernel, so the container gets the host's devices
+# (privileged) instead of a fixed list, plus udev's database for device discovery.
+services:
+  pumpkin:
+    privileged: true
+    volumes:
+      - /run/udev:/run/udev:ro

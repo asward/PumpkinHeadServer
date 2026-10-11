@@ -16,6 +16,7 @@ services:
       # stepper4 board. Set PUMPKIN_SERIAL_DEVICE=/dev/null in .env when there is no board
       # (e.g. PUMPKIN_SERIAL_PORT=mock), or to a /dev/serial/by-id/... path.
       - ${PUMPKIN_SERIAL_DEVICE:-/dev/ttyACM0}:/dev/ttyACM0
-      - /dev/video0:/dev/video0     # USB camera
+      # USB camera. For a Pi CSI camera, also use docker-compose.rpicam.yml (see README).
+      - ${PUMPKIN_CAMERA_DEVICE:-/dev/video0}:${PUMPKIN_CAMERA_DEVICE:-/dev/video0}
       - /dev/snd:/dev/snd           # speaker + camera microphone
       - /dev/gpiochip0:/dev/gpiochip0  # eyes + mouth (Pi 5 on older kernels: gpiochip4)
