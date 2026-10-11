@@ -44,6 +44,7 @@ Data lives in `PUMPKIN_DATA_DIR` (`/data` in the container): `clips/*.wav` (dry 
 | --- | --- | --- |
 | Eyes LED (via transistor/MOSFET) | GPIO17 (pin 11), PWM-dimmed | `PUMPKIN_EYES_PIN`, `PUMPKIN_EYES_PWM` |
 | Mouth motor (via driver/relay) | GPIO27 (pin 13), max on 3 s | `PUMPKIN_MOUTH_PIN`, `PUMPKIN_MOUTH_MAX_ON_MS` |
+| Mouth motor via H-bridge | open: GPIO27 (pin 13) → IN1, close: GPIO22 (pin 15) → IN2, closes for 150 ms | `PUMPKIN_MOUTH_DRIVER=hbridge`, `PUMPKIN_MOUTH_CLOSE_PIN`, `PUMPKIN_MOUTH_CLOSE_MS` |
 | Output polarity | active-high | `PUMPKIN_ACTIVE_HIGH` |
 | stepper4 board | `/dev/ttyACM0`, candy on M1, 200 steps at 800 sps | `PUMPKIN_SERIAL_PORT`, `PUMPKIN_CANDY_*` |
 | Camera | `/dev/video0`, 640x480 at 15 fps, MJPEG | `PUMPKIN_CAMERA_*` |

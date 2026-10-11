@@ -1,4 +1,4 @@
-"""Eyes (LED, optionally PWM-dimmed) and mouth (discrete motor) outputs.
+"""Eyes (LED, optionally PWM-dimmed) and mouth (motor on one pin, or both ways via an H-bridge) outputs.
 
 Uses lgpio, which talks to /dev/gpiochipN and works on every Pi including the Pi 5.
 Falls back to a logging mock when lgpio or the chip is unavailable.
@@ -67,13 +67,15 @@ class Outputs:
         self.eyes = 0.0
         self.mouth = False
         self._mouth_timer: asyncio.TimerHandle | None = None
+        self._hbridge = cfg.mouth_driver == "hbridge"
         self._pins = self._make_pins()
 
     def _make_pins(self):
         cfg = self.cfg
+        pins = [cfg.eyes_pin, cfg.mouth_pin] + ([cfg.mouth_close_pin] if self._hbridge else [])
         if cfg.gpio_backend in ("auto", "lgpio"):
             try:
-                return _LgpioPins(cfg.gpio_chip, [cfg.eyes_pin, cfg.mouth_pin], cfg.active_high, cfg.eyes_pwm_hz)
+                return _LgpioPins(cfg.gpio_chip, pins, cfg.active_high, cfg.eyes_pwm_hz)
             except Exception as e:
                 if cfg.gpio_backend == "lgpio":
                     raise
@@ -97,23 +99,53 @@ class Outputs:
             self._pins.write(self.cfg.eyes_pin, value >= 1)
         self.on_change("eyes", value, source)
 
+    def _drive_mouth(self, direction: int) -> None:
+        """1 = open, -1 = close (hbridge only), 0 = stop."""
+        if not self._hbridge:
+            self._pins.write(self.cfg.mouth_pin, direction > 0)
+            return
+        a, b = self.cfg.mouth_pin, self.cfg.mouth_close_pin
+        # Release the active input before raising the other so both are never high together.
+        if direction > 0:
+            self._pins.write(b, False)
+            self._pins.write(a, True)
+        elif direction < 0:
+            self._pins.write(a, False)
+            self._pins.write(b, True)
+        else:
+            self._pins.write(a, False)
+            self._pins.write(b, False)
+
+    def _stop_mouth(self) -> None:
+        self._mouth_timer = None
+        self._drive_mouth(0)
+
     def set_mouth(self, on: bool, source: str = "manual") -> None:
         on = bool(on)
         if on == self.mouth:
             return
         self.mouth = on
-        self._pins.write(self.cfg.mouth_pin, on)
         if self._mouth_timer:
             self._mouth_timer.cancel()
             self._mouth_timer = None
-        if on and self.cfg.mouth_max_on_ms:
-            self._mouth_timer = asyncio.get_running_loop().call_later(
-                self.cfg.mouth_max_on_ms / 1000, self.set_mouth, False, "safety")
+        loop = asyncio.get_running_loop()
+        if on:
+            self._drive_mouth(1)
+            if self.cfg.mouth_max_on_ms:
+                self._mouth_timer = loop.call_later(
+                    self.cfg.mouth_max_on_ms / 1000, self.set_mouth, False, "safety")
+        elif self._hbridge and self.cfg.mouth_close_ms:
+            self._drive_mouth(-1)
+            self._mouth_timer = loop.call_later(self.cfg.mouth_close_ms / 1000, self._stop_mouth)
+        else:
+            self._drive_mouth(0)
         self.on_change("mouth", float(on), source)
 
     def close(self) -> None:
         try:
-            self._pins.write(self.cfg.mouth_pin, False)
+            if self._mouth_timer:
+                self._mouth_timer.cancel()
+            self._drive_mouth(0)
             if self.cfg.eyes_pwm:
                 self._pins.pwm(self.cfg.eyes_pin, 0)
             else:

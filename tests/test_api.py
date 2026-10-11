@@ -84,3 +84,9 @@ def test_estop_latches(client):
     assert client.post("/api/stepper/cmd", json={"cmd": "MOVE 1 10"}).json()["error"] == "ESTOP"
     client.post("/api/reset")
     assert client.post("/api/stepper/cmd", json={"cmd": "MOVE 1 10"}).status_code == 200
+
+
+def test_manual_mouth_and_eyes(client):
+    assert client.post("/api/mouth", json={"value": 1}).json() == {"mouth": True}
+    assert client.post("/api/mouth", json={"value": 0}).json() == {"mouth": False}
+    assert client.post("/api/eyes", json={"value": 1}).json() == {"eyes": 1.0}

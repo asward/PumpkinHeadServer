@@ -28,7 +28,12 @@ class Settings(BaseSettings):
     eyes_pin: int = 17
     eyes_pwm: bool = True
     eyes_pwm_hz: int = 200
+    # Mouth driver: single = one on/off pin (relay or MOSFET, spring closes the jaw)
+    #               hbridge = two H-bridge inputs; mouth_pin drives open, mouth_close_pin drives closed
+    mouth_driver: str = "single"
     mouth_pin: int = 27
+    mouth_close_pin: int = 22  # hbridge only
+    mouth_close_ms: int = 150  # hbridge only: drive closed this long, then stop. 0 = just stop (coast)
     active_high: bool = True
     mouth_max_on_ms: int = 3000  # safety cut-off for the mouth motor, 0 = none
 
