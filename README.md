@@ -46,7 +46,7 @@ Data lives in `PUMPKIN_DATA_DIR` (`/data` in the container): `clips/*.wav` (dry 
 | Mouth motor (via driver/relay) | GPIO27 (pin 13), max on 3 s | `PUMPKIN_MOUTH_PIN`, `PUMPKIN_MOUTH_MAX_ON_MS` |
 | Output polarity | active-high | `PUMPKIN_ACTIVE_HIGH` |
 | stepper4 board | `/dev/ttyACM0`, candy on M1, 200 steps at 800 sps | `PUMPKIN_SERIAL_PORT`, `PUMPKIN_CANDY_*` |
-| Camera | `/dev/video0`, 640x480 at 15 fps, MJPEG | `PUMPKIN_CAMERA_*` |
+| Camera | USB webcam on `/dev/video0`, 640x480 at 15 fps, MJPEG | `PUMPKIN_CAMERA_*` (`PUMPKIN_CAMERA_SOURCE=rpicam` for a Pi CSI camera) |
 | Camera mic | off | `PUMPKIN_CAMERA_AUDIO_DEVICE` (find it with `arecord -L`) |
 | Speaker | system default | `PUMPKIN_AUDIO_DEVICE` |
 
@@ -72,6 +72,7 @@ docker compose up -d --build
 - **HTTPS is required** for browser microphone access from another device. The container makes a self-signed certificate on first start (`PUMPKIN_TLS=0` serves plain HTTP on 8080). Set `PUMPKIN_HOSTNAME` to the Pi's hostname before the first start.
 - Every device in `docker-compose.yml` must exist or the container won't start. Remove any you don't have, and prefer `/dev/serial/by-id/...` for the motor board.
 - Pi 5 on kernels older than 6.6.45 exposes the header as `gpiochip4`: set `PUMPKIN_GPIO_CHIP=4` and map that device.
+- **Pi CSI (ribbon) camera:** set `PUMPKIN_CAMERA_SOURCE=rpicam` and `COMPOSE_FILE=docker-compose.yml:docker-compose.rpicam.yml` in `.env`, then rebuild. These cameras go through libcamera, so ffmpeg can't read their `/dev/video0`. The override runs the container privileged so libcamera can reach its media and DMA devices. Check the camera on the host first with `rpicam-hello --list-cameras`.
 - Cross-build from a PC: `docker buildx build --platform linux/arm64 -t pumpkinhead .`
 
 ## Using it
