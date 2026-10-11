@@ -124,14 +124,15 @@ def get_state():
     return svc.state()
 
 
+# async so these run on the event loop: Outputs schedules timers and notifies listeners there.
 @app.post("/api/eyes")
-def set_eyes(body: Value):
+async def set_eyes(body: Value):
     svc.outputs.set_eyes(body.value)
     return {"eyes": svc.outputs.eyes}
 
 
 @app.post("/api/mouth")
-def set_mouth(body: Value):
+async def set_mouth(body: Value):
     svc.outputs.set_mouth(body.value >= 0.5)
     return {"mouth": svc.outputs.mouth}
 
