@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 
 DEFAULTS = {
     "fx": {"preset": "monster", "params": FxParams.from_dict(PRESETS["monster"]).to_dict()},
-    "lipsync": {"enabled": True, "threshold": 0.03, "min_ms": 90, "max_open_ms": 350},
+    "lipsync": {"enabled": True, "threshold": 0.03, "min_ms": 90, "max_open_ms": 350, "hang_ms": 300},
     "mouth": dict(MOTION_DEFAULTS),
     "autopilot": {"enabled": False, "sequences": [], "min_gap": 20, "max_gap": 60, "order": "random"},
 }

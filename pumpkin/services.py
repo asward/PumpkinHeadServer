@@ -77,7 +77,7 @@ class Services:
         st = self.stepper
         return {
             "outputs": {"eyes": self.outputs.eyes, "mouth": self.outputs.mouth,
-                        "mouth_limit": self.outputs.limit},
+                        "mouth_mode": self.outputs.mode},
             "backends": {"gpio": self.outputs.backend, "audio": self.audio.backend},
             "stepper": {"enabled": st is not None, "connected": bool(st and st.connected),
                         "version": st.version if st else None, "estopped": self.estopped},
@@ -205,8 +205,12 @@ class Services:
 
     # ---- background loops
     async def _lipsync_loop(self) -> None:
-        """Open the mouth while the speaker is loud; flap it during long sounds."""
-        open_, changed = False, 0.0
+        """Move the mouth with the voice.
+
+        Timed mode: open while loud, flap during long sounds. Center mode: flap while talking with
+        the swing scaled by volume, and drive back to center after hang_ms of quiet.
+        """
+        open_, changed, last_loud = False, 0.0, 0.0
         while True:
             await asyncio.sleep(0.02)
             ls = self.runtime["lipsync"]
@@ -216,8 +220,20 @@ class Services:
                     self.outputs.set_mouth(False, "lipsync")
                 continue
             now = time.monotonic()
+            env, thr = self.audio.env, ls["threshold"]
+            if self.outputs.centered:
+                if env > (thr * 0.6 if open_ else thr):
+                    last_loud = now
+                    self.outputs.set_level((env / thr - 1) / 4)  # full swing at 5x the threshold
+                    if not open_:
+                        open_ = True
+                        self.outputs.set_mouth(True, "lipsync")
+                elif open_ and now - last_loud > ls["hang_ms"] / 1000:
+                    open_ = False
+                    self.outputs.set_mouth(False, "lipsync")
+                continue
             held = now - changed
-            want = self.audio.env > (ls["threshold"] * 0.6 if open_ else ls["threshold"])
+            want = env > (thr * 0.6 if open_ else thr)
             if open_ and want and held > ls["max_open_ms"] / 1000:
                 want = False
             if want != open_ and held >= ls["min_ms"] / 1000:

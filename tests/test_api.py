@@ -97,5 +97,8 @@ def test_mouth_settings_roundtrip(client):
     assert r.status_code == 200
     m = r.json()
     assert (m["flap"], m["open_ms"], m["close_ms"]) == (False, 120, 200)
-    assert client.get("/api/state").json()["mouth"]["close_ms"] == 200
+    st = client.get("/api/state").json()
+    assert st["mouth"]["close_ms"] == 200 and st["outputs"]["mouth_mode"] == "timed"
+    assert client.put("/api/mouth", json={"swing_min_ms": 40, "swing_max_ms": 300}).json()["swing_max_ms"] == 300
+    assert client.put("/api/lipsync", json={"hang_ms": 500}).json()["hang_ms"] == 500
     assert client.put("/api/mouth", json={"open_ms": 5}).status_code == 422

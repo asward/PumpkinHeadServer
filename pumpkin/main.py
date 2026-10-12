@@ -93,7 +93,9 @@ class Mouth(BaseModel):
     open_ms: int | None = Field(None, ge=20, le=2000)
     close_ms: int | None = Field(None, ge=20, le=2000)
     end_close_ms: int | None = Field(None, ge=0, le=2000)
-    backoff_cycles: float | None = Field(None, ge=0, le=20)
+    swing_min_ms: int | None = Field(None, ge=0, le=2000)
+    swing_max_ms: int | None = Field(None, ge=0, le=2000)
+    seek_timeout_ms: int | None = Field(None, ge=100, le=10000)
 
 
 class Lipsync(BaseModel):
@@ -101,6 +103,7 @@ class Lipsync(BaseModel):
     threshold: float | None = Field(None, gt=0, le=1)
     min_ms: int | None = Field(None, ge=20, le=1000)
     max_open_ms: int | None = Field(None, ge=50, le=5000)
+    hang_ms: int | None = Field(None, ge=0, le=5000)
 
 
 class Autopilot(BaseModel):

@@ -205,78 +205,160 @@ def test_settings_change_applies_live():
     run(t())
 
 
-# ---- limit switch
+# ---- center switch
 
-def test_limit_hit_while_driving_cuts_then_backs_off():
+CENTER = dict(mouth_driver="hbridge", mouth_center_pin=24)
+FIXED = {"swing_min_ms": 30, "swing_max_ms": 30, "seek_timeout_ms": 1000}
+OPEN, CLOSE, STOP = {22: False, 27: True}, {22: True, 27: False}, {22: False, 27: False}
+
+
+def centered(motion=FIXED, closed_side=True, changes=None, **kw):
+    out, rec = make(motion, changes, **dict(CENTER, **kw))
+    out.closed_side = closed_side
+    return out, rec
+
+
+def test_center_mode_detected():
+    assert centered()[0].mode == "center"
+    assert make(mouth_center_pin=24)[0].mode == "timed"     # needs an H-bridge
+    assert make(mouth_driver="hbridge")[0].mode == "timed"
+
+
+def test_center_flap_crosses_overshoots_and_reverses():
     async def t():
-        changes = []
-        out, rec = make(dict(HOLD, open_ms=10, close_ms=10, backoff_cycles=2.5), changes,
-                        mouth_driver="hbridge", mouth_enable_pin=23, mouth_limit_pin=24)
-        out.set_mouth(True)                              # driving open
-        out._limit_from_thread(True)                     # switch thread: cut first
-        assert rec.level[23] is False
-        await asyncio.sleep(0)                           # loop handles the rest
-        assert out.limit and out.mouth is False
-        assert rec.level == {22: True, 27: False, 23: True}  # backing off: closing
-        assert ("mouth", 0.0, "safety") in changes and ("mouth_limit", 1.0, "safety") in changes
-        out.limit_changed(False)                         # releases mid back-off
-        await asyncio.sleep(0.07)                        # 2.5 cycles x 20 ms = 50 ms
+        out, rec = centered()
+        out.set_mouth(True)
+        assert rec.level == OPEN                 # closed side: head for center by opening
+        out.center_changed(False)                # crossed into the open side
+        assert rec.level == OPEN                 # keep going for the swing
+        await asyncio.sleep(0.05)
+        assert rec.level == CLOSE                # reversed toward center
+        out.center_changed(True)                 # crossed into the closed side
+        await asyncio.sleep(0.05)
+        assert rec.level == OPEN
+        out.halt()
+        assert ok(rec)
+    run(t())
+
+
+def test_center_bounce_counts_once_per_sweep():
+    async def t():
+        out, rec = centered()
+        out.set_mouth(True)
+        out.center_changed(False)                # crossing
+        out.center_changed(True)                 # bounce back...
+        out.center_changed(False)                # ...and forth: must not schedule a second reversal
+        await asyncio.sleep(0.04)
+        assert rec.level == CLOSE                # one reversal at ~30 ms
+        await asyncio.sleep(0.04)
+        assert rec.level == CLOSE                # no second reversal without a new crossing
+        out.halt()
+    run(t())
+
+
+def test_release_seeks_center_and_stops_on_the_edge():
+    async def t():
+        out, rec = centered(closed_side=False)
+        out.set_mouth(True)
+        assert rec.level == CLOSE                # open side: head for center by closing
+        out.set_mouth(False)
+        assert rec.level == CLOSE                # still heading for center
+        out.center_changed(True)                 # switch closes at center
+        assert rec.level == STOP
+        await asyncio.sleep(0.05)
+        assert rec.level == STOP and ok(rec)
+    run(t())
+
+
+def test_release_from_closed_side_opens_to_center():
+    async def t():
+        out, rec = centered(closed_side=True)
+        out.set_mouth(True)
+        out.center_changed(False)                # now on the open side, swinging
+        out.set_mouth(False)
+        assert rec.level == CLOSE                # back toward center
+        out.center_changed(True)
+        assert rec.level == STOP
+    run(t())
+
+
+def test_switch_thread_cuts_enable_immediately_when_seeking():
+    async def t():
+        out, rec = centered(closed_side=False, mouth_enable_pin=23)
+        out.set_mouth(True)
+        out.set_mouth(False)                     # seeking center by closing
+        assert rec.level[23] is True
+        out._switch_from_thread(True)            # switch closes: callback thread
+        assert rec.level[23] is False            # cut before the loop runs
+        await asyncio.sleep(0)
         assert rec.level == {22: False, 27: False, 23: False} and ok(rec)
     run(t())
 
 
-def test_limit_hit_while_sagging_backs_off_upward():
-    """Jaw closed and stopped, then sags onto the switch: back off by opening."""
+def test_switch_thread_does_not_cut_while_flapping():
     async def t():
-        out, rec = make(dict(HOLD, end_close_ms=10, open_ms=10, close_ms=10, backoff_cycles=2),
-                        mouth_driver="hbridge", mouth_limit_pin=24)
+        out, rec = centered(mouth_enable_pin=23)
         out.set_mouth(True)
-        out.set_mouth(False)
-        await asyncio.sleep(0.03)                        # close finished, motor stopped
-        assert rec.level == {22: False, 27: False}
-        out.limit_changed(True)                          # sags onto the switch
-        assert rec.level == {22: False, 27: True}        # driving open, away from it
-        await asyncio.sleep(0.06)
-        assert rec.level == {22: False, 27: False} and ok(rec)
-    run(t())
-
-
-def test_still_pressed_after_backoff_can_drive_away_not_into():
-    async def t():
-        out, rec = make(dict(HOLD, end_close_ms=10, open_ms=10, close_ms=10, backoff_cycles=1),
-                        mouth_driver="hbridge", mouth_limit_pin=24)
-        out.set_mouth(True)
-        out.set_mouth(False)                             # closing (-1)
-        out.limit_changed(True)                          # hits bottom switch while closing
-        await asyncio.sleep(0.04)                        # back-off done, switch still pressed
-        assert out.limit
-        out._drive_mouth(-1)                             # further down: refused
-        assert rec.level == {22: False, 27: False}
-        out.set_mouth(True)                              # mouth button: up, allowed
-        assert out.mouth is True and rec.level == {22: False, 27: True}
-        out.limit_changed(False)
+        out._switch_from_thread(False)
+        assert rec.level[23] is True
         out.halt()
     run(t())
 
 
-def test_limit_at_startup_does_not_block_either_way():
+def test_center_invert():
     async def t():
-        out, rec = make(HOLD, mouth_driver="hbridge", mouth_limit_pin=24)
-        out.limit = True                                 # as if pressed at startup
+        out, rec = centered(closed_side=False, mouth_center_invert=True)
         out.set_mouth(True)
-        assert rec.level[27] is True
+        out.set_mouth(False)                     # seeking by closing
+        out._switch_from_thread(True)            # pressed = open side when inverted: not the edge
+        await asyncio.sleep(0)
+        assert rec.level == CLOSE
+        out._switch_from_thread(False)           # released = closed side: the edge
+        await asyncio.sleep(0)
+        assert rec.level == STOP
+    run(t())
+
+
+def test_stuck_timeout_stops_motor():
+    async def t():
+        changes = []
+        out, rec = centered(dict(FIXED, seek_timeout_ms=40), changes=changes)
+        out.set_mouth(True)
+        await asyncio.sleep(0.06)                # never crossed
+        assert rec.level == STOP and out.mouth is False
+        assert ("mouth", 0.0, "safety") in changes
+    run(t())
+
+
+def test_crossing_against_drive_direction_is_ignored():
+    async def t():
+        out, rec = centered(closed_side=False)
+        out.set_mouth(True)                      # closing toward center
+        out.center_changed(False)                # no change
+        out.closed_side = True
+        out.center_changed(False)                # "opened" while closing: hand-moved/noise, ignore
+        await asyncio.sleep(0.05)
+        assert rec.level == CLOSE
         out.halt()
     run(t())
 
 
-def test_single_pin_limit_when_coasting_does_not_block_open():
+def test_swing_scales_with_level():
+    out, _ = centered({"swing_min_ms": 50, "swing_max_ms": 250})
+    out.set_level(0)
+    assert out._swing() == 0.05
+    out.set_level(1)
+    assert all(0.05 <= out._swing() <= 0.25 for _ in range(50))
+
+
+def test_button_resets_level_after_lipsync():
     async def t():
-        out, rec = make(HOLD, mouth_limit_pin=24)
-        out.set_mouth(True)
-        out.set_mouth(False)                             # spring closes onto the switch
-        out.limit_changed(True)
-        out.set_mouth(True)
-        assert rec.level == {27: True}
+        out, _ = centered()
+        out.set_mouth(True, "lipsync")
+        out.set_level(0.1)
+        out.set_mouth(False, "lipsync")
+        out.set_mouth(True, "manual")
+        assert out._level == 1.0
         out.halt()
     run(t())
 

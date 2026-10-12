@@ -47,7 +47,7 @@ Data lives in `PUMPKIN_DATA_DIR` (`/data` in the container): `clips/*.wav` (dry 
 | Mouth motor via H-bridge | open: GPIO27 (pin 13) → IN1, close: GPIO22 (pin 15) → IN2 | `PUMPKIN_MOUTH_DRIVER=hbridge`, `PUMPKIN_MOUTH_CLOSE_PIN` |
 | H-bridge enable (optional) | off (jumpered); e.g. GPIO23 (pin 16) → EN/ENA, high only while driving | `PUMPKIN_MOUTH_ENABLE_PIN` |
 | Mouth flapping and timing | flap 150 ms open / 150 ms closed | UI → Puppet → Mouth motion |
-| Mouth limit switch (optional) | off; e.g. GPIO24 (pin 18), normally open to GND | `PUMPKIN_MOUTH_LIMIT_PIN` (back-off set in the UI) |
+| Mouth center switch (optional, H-bridge) | off; e.g. GPIO24 (pin 18) to GND, closed on the closed side of center | `PUMPKIN_MOUTH_CENTER_PIN`, `PUMPKIN_MOUTH_CENTER_INVERT` |
 | Output polarity | active-high | `PUMPKIN_ACTIVE_HIGH` |
 | stepper4 board | `/dev/ttyACM0`, candy on M1, 200 steps at 800 sps | `PUMPKIN_SERIAL_PORT`, `PUMPKIN_CANDY_*` |
 | Camera | USB webcam on `/dev/video0`, 640x480 at 15 fps, MJPEG | `PUMPKIN_CAMERA_*` (`PUMPKIN_CAMERA_SOURCE=rpicam` for a Pi CSI camera) |
@@ -100,7 +100,7 @@ A sequence's **Voice** is the live voice-changer setting, a preset, or "as recor
 - **E-STOP** sends the board's real-time `!` halt, then latches `ESTOP` (drivers off) until **Reset E-stop**. It also stops playback and turns off autopilot.
 - The board's host watchdog (`WD`, 1 s by default) halts the motors if the server dies or the USB link drops.
 - The mouth output turns itself off after `PUMPKIN_MOUTH_MAX_ON_MS` so a stuck button can't stall the motor.
-- The mouth limit switch cuts the motor drive the moment it closes (the enable pin if wired). On an H-bridge the jaw then backs off the way it came for the UI's back-off cycles and stops. This also catches a jaw sagging onto the switch while undriven. While the switch stays pressed, only the direction that hit it is refused, so the mouth button can drive it back off. E-STOP and stop-all halt the mouth in place.
+- With a center switch the mouth flaps through center: after each crossing it keeps going for a random time between the UI's min and max swing, then reverses, so it stays centered. Lip-sync scales the swing with the voice volume. When the button is released or the voice goes quiet, the jaw drives back to center and stops the moment the switch changes (the enable pin drops straight from the GPIO callback). If the switch isn't reached within the stuck timeout, the motor stops. E-STOP and stop-all halt the mouth in place.
 - `PUMPKIN_MOUTH_MAX_ON_MS` cuts a mouth held open (flapping off) so a stuck button can't stall the motor.
 - Raw motor commands from the UI and sequences are limited to the spec's command set. `WD` is reserved for the server.
 

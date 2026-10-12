@@ -34,9 +34,12 @@ class Settings(BaseSettings):
     mouth_pin: int = 27
     mouth_close_pin: int = 22  # hbridge only
     mouth_enable_pin: int = -1  # hbridge only: EN/ENA input, high only while driving. -1 = not wired (jumpered)
-    # Limit switch input: normally open to GND, internal pull-up. -1 = none.
-    # Flap timing, closing and limit back-off are tuned in the UI (runtime "mouth" settings).
-    mouth_limit_pin: int = -1
+    # Center switch (hbridge only): to GND, internal pull-up; closed while the jaw is on the
+    # closed side of center, open on the open side. -1 = none (timed flapping).
+    # invert = true if yours is the other way round (closed on the open side).
+    # Flap and centering timing are tuned in the UI (runtime "mouth" settings).
+    mouth_center_pin: int = -1
+    mouth_center_invert: bool = False
     active_high: bool = True
     mouth_max_on_ms: int = 3000  # safety cut-off for the mouth motor, 0 = none
 
