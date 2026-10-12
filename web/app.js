@@ -103,7 +103,6 @@ function applyState(st) {
   $('#banner').classList.toggle('hidden', !notes.length);
   setOutput('eyes', st.outputs.eyes);
   setOutput('mouth', st.outputs.mouth);
-  setOutput('mouth_limit', st.outputs.mouth_limit);
   $('#btn-listen').disabled = !st.camera.audio;
   $('#btn-listen').title = st.camera.audio ? '' : 'No camera microphone configured (PUMPKIN_CAMERA_AUDIO_DEVICE)';
   $('#fx-preset').replaceChildren(
@@ -130,9 +129,6 @@ function setOutput(name, value) {
     $('#btn-eyes').style.opacity = value > 0 ? 0.55 + value * 0.45 : '';
   } else if (name === 'mouth') {
     $('#btn-mouth').classList.toggle('on', !!value);
-  } else if (name === 'mouth_limit') {
-    $('#btn-mouth').classList.toggle('limit', !!value);
-    $('#btn-mouth').title = value ? 'Mouth limit switch is pressed' : '';
   }
 }
 
@@ -195,19 +191,25 @@ function renderLipsync() {
   $('#ls-enabled').checked = ls.enabled;
   $('#ls-threshold').value = 0.205 - ls.threshold; // slider right = more sensitive
   $('#ls-max-open').value = ls.max_open_ms;
+  $('#ls-hang').value = ls.hang_ms;
 }
 const putLipsync = run((body) => api('PUT', '/api/lipsync', body));
 $('#ls-enabled').onchange = () => putLipsync({ enabled: $('#ls-enabled').checked });
 $('#ls-threshold').onchange = () => putLipsync({ threshold: +(0.205 - $('#ls-threshold').value).toFixed(3) });
 $('#ls-max-open').onchange = () => putLipsync({ max_open_ms: +$('#ls-max-open').value });
+$('#ls-hang').onchange = () => putLipsync({ hang_ms: +$('#ls-hang').value });
 
 const MOUTH_SLIDERS = [
-  ['#mouth-open-ms', 'open_ms'], ['#mouth-close-ms', 'close_ms'],
-  ['#mouth-end-close-ms', 'end_close_ms'], ['#mouth-backoff', 'backoff_cycles'],
+  ['#mouth-open-ms', 'open_ms'], ['#mouth-close-ms', 'close_ms'], ['#mouth-end-close-ms', 'end_close_ms'],
+  ['#mouth-swing-min', 'swing_min_ms'], ['#mouth-swing-max', 'swing_max_ms'], ['#mouth-seek-timeout', 'seek_timeout_ms'],
 ];
 function renderMouth() {
   const m = S.state.mouth;
   if (!m) return;
+  const center = S.state.outputs.mouth_mode === 'center';
+  $('#mouth-timed').classList.toggle('hidden', center);
+  $('#mouth-center').classList.toggle('hidden', !center);
+  $('#ls-hang').closest('label').classList.toggle('hidden', !center);
   $('#mouth-flap').checked = m.flap;
   for (const [sel, key] of MOUTH_SLIDERS) {
     $(sel).value = m[key];

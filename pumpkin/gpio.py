@@ -1,5 +1,12 @@
 """Eyes (LED, optionally PWM-dimmed) and mouth (motor on one pin, or both ways via an H-bridge) outputs.
 
+Mouth motion has two modes:
+- timed: flap with fixed open/close drive times (no position feedback).
+- center: an H-bridge plus a center switch that is closed while the jaw is on the closed side
+  of center and open on the open side. Flapping drives through center, overshoots for a random
+  time, and reverses, so it stays centered. Turning the mouth off drives back to the switch's
+  edge and stops there.
+
 Uses lgpio, which talks to /dev/gpiochipN and works on every Pi including the Pi 5.
 Falls back to a logging mock when lgpio or the chip is unavailable.
 """
@@ -7,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from typing import Callable
 
 log = logging.getLogger(__name__)
@@ -77,11 +85,15 @@ class _LgpioPins:
 
 # Operator-tunable mouth motion; Services swaps in the persisted runtime["mouth"] dict.
 MOTION_DEFAULTS = {
-    "flap": True,         # button/sequence "on" flaps open/closed instead of holding open
-    "open_ms": 150,       # flap: drive open this long
-    "close_ms": 150,      # flap: drive closed this long (raise it if the jaw creeps open, lower if it sags)
-    "end_close_ms": 150,  # H-bridge: drive closed this long when the mouth turns off, then stop. 0 = coast
-    "backoff_cycles": 10,  # limit hit: drive away for this many flap cycles (open_ms + close_ms each)
+    # timed mode (no center switch)
+    "flap": True,          # button/sequence "on" flaps open/closed instead of holding open
+    "open_ms": 150,        # drive open this long
+    "close_ms": 150,       # drive closed this long
+    "end_close_ms": 150,   # H-bridge: drive closed this long when the mouth turns off, then stop. 0 = coast
+    # center mode (H-bridge + center switch)
+    "swing_min_ms": 60,    # after crossing center, keep going a random time in [min, max] then reverse
+    "swing_max_ms": 200,
+    "seek_timeout_ms": 1000,  # no center crossing within this while heading for it = stuck: stop
 }
 
 
@@ -89,7 +101,6 @@ class Outputs:
     """Current eyes/mouth state. on_change(name, value, source) fires on every change.
 
     source is one of: manual, lipsync, sequence, safety. Construct and call from the event loop.
-    Lip-sync does its own flapping, so it always drives the mouth directly.
     """
 
     def __init__(self, cfg, on_change: Callable[[str, float, str], None], motion: dict | None = None):
@@ -98,24 +109,32 @@ class Outputs:
         self.motion = motion if motion is not None else dict(MOTION_DEFAULTS)
         self.eyes = 0.0
         self.mouth = False
-        self.limit = False           # limit switch currently pressed
         self._hbridge = cfg.mouth_driver == "hbridge"
         self._dir = 0                # direction being driven now: 1 open, -1 close, 0 stopped
-        self._last_dir = 0           # last non-zero direction (where a coasting jaw is heading)
-        self._limit_dir = 0          # direction that ran into the switch; refused while it is pressed
-        self._backing_off = False
+        self._level = 1.0            # swing size 0..1 (lip-sync sets it from the voice volume)
         self._flapping = False       # current "on" flaps (vs. holds open)
-        self._timer: asyncio.TimerHandle | None = None      # flap phase / end close / back-off
+        self._seeking = False        # center mode: heading for center to stop there
+        self._awaiting = False       # center mode: driving toward center, crossing not seen yet
+        self._timer: asyncio.TimerHandle | None = None      # flap phase / end close / swing reversal
+        self._timeout: asyncio.TimerHandle | None = None    # center crossing deadline
         self._max_timer: asyncio.TimerHandle | None = None  # mouth_max_on_ms cut-off
+        self._rng = random.Random()
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError:
             self._loop = None
         self._pins = self._make_pins()
-        if cfg.mouth_limit_pin >= 0:
-            self.limit = self._pins.watch_low(cfg.mouth_limit_pin, self._limit_from_thread)
-            if self.limit:
-                log.warning("mouth limit switch is pressed at startup; drive the mouth off it")
+        self.centered = self._hbridge and cfg.mouth_center_pin >= 0  # center mode
+        if cfg.mouth_center_pin >= 0 and not self._hbridge:
+            log.warning("PUMPKIN_MOUTH_CENTER_PIN needs PUMPKIN_MOUTH_DRIVER=hbridge; ignoring it")
+        self.closed_side = False     # center mode: jaw is on the closed side of center
+        if self.centered:
+            pressed = self._pins.watch_low(cfg.mouth_center_pin, self._switch_from_thread)
+            self.closed_side = pressed != cfg.mouth_center_invert
+
+    @property
+    def mode(self) -> str:
+        return "center" if self.centered else "timed"
 
     def _make_pins(self):
         cfg = self.cfg
@@ -161,13 +180,8 @@ class Outputs:
                 self._pins.write(self.cfg.mouth_close_pin, False)
 
     def _drive_mouth(self, direction: int) -> None:
-        """1 = open, -1 = close (hbridge only), 0 = stop. While the limit switch is pressed,
-        the direction that ran into it is refused; moving away is always allowed."""
-        if direction and self.limit and direction == self._limit_dir and not self._backing_off:
-            direction = 0
+        """1 = open, -1 = close (hbridge only), 0 = stop."""
         self._dir = direction
-        if direction:
-            self._last_dir = direction
         if not self._hbridge:
             self._pins.write(self.cfg.mouth_pin, direction > 0)
             return
@@ -188,43 +202,40 @@ class Outputs:
         if en >= 0 and direction:
             self._pins.write(en, True)
 
-    # ---- mouth: motion
+    # ---- mouth: shared
     def _ms(self, key: str) -> float:
         return max(float(self.motion.get(key, MOTION_DEFAULTS[key])), 0.0) / 1000
-
-    def _cancel_timers(self) -> None:
-        for t in (self._timer, self._max_timer):
-            if t:
-                t.cancel()
-        self._timer = self._max_timer = None
 
     def _later(self, secs: float, fn, *args) -> asyncio.TimerHandle:
         return asyncio.get_running_loop().call_later(secs, fn, *args)
 
-    def _open_phase(self) -> None:
-        self._drive_mouth(1)
-        if self._flapping:
-            self._timer = self._later(self._ms("open_ms"), self._close_phase)
+    def _cancel_timers(self) -> None:
+        for t in (self._timer, self._timeout, self._max_timer):
+            if t:
+                t.cancel()
+        self._timer = self._timeout = self._max_timer = None
 
-    def _close_phase(self) -> None:
-        self._drive_mouth(-1 if self._hbridge else 0)
-        self._timer = self._later(self._ms("close_ms"), self._open_phase)
-
-    def _stop_motion(self) -> None:
-        self._timer = None
-        self._backing_off = False
-        self._drive_mouth(0)
+    def set_level(self, level: float) -> None:
+        """Swing size for the next center-mode reversals, 0..1 (1 = up to swing_max_ms)."""
+        self._level = min(max(float(level), 0.0), 1.0)
 
     def set_mouth(self, on: bool, source: str = "manual") -> None:
         on = bool(on)
         if on == self.mouth:
             return
-        if on and self._backing_off:
-            log.info("mouth: ignoring open from %s while backing off the limit switch", source)
-            return
         self.mouth = on
         self._cancel_timers()
-        if on:
+        self._seeking = self._awaiting = False
+        if source != "lipsync":
+            self._level = 1.0
+        if self.centered:
+            if on:
+                self._flapping = True
+                self._toward_center()
+            else:
+                self._flapping = False
+                self._seek_center()
+        elif on:
             self._flapping = (bool(self.motion.get("flap")) and source != "lipsync"
                               and self._ms("open_ms") > 0 and self._ms("close_ms") > 0)
             self._open_phase()
@@ -239,53 +250,87 @@ class Outputs:
         self.on_change("mouth", float(on), source)
 
     def halt(self, source: str = "safety") -> None:
-        """Stop the mouth motor where it is, with no closing move (E-stop / stop all)."""
+        """Stop the mouth motor where it is (E-stop / stop all / stuck)."""
         self._cancel_timers()
-        self._backing_off = False
+        self._seeking = self._flapping = self._awaiting = False
         self._drive_mouth(0)
         if self.mouth:
             self.mouth = False
             self.on_change("mouth", 0.0, source)
 
-    # ---- limit switch
-    def _limit_from_thread(self, active: bool) -> None:
-        """Runs on lgpio's callback thread: cut the drive first, then let the loop sort out the rest."""
-        if active and not self._backing_off:
+    def _stop_motion(self) -> None:
+        self._timer = None
+        self._drive_mouth(0)
+
+    # ---- mouth: timed mode
+    def _open_phase(self) -> None:
+        self._drive_mouth(1)
+        if self._flapping:
+            self._timer = self._later(self._ms("open_ms"), self._close_phase)
+
+    def _close_phase(self) -> None:
+        self._drive_mouth(-1 if self._hbridge else 0)
+        self._timer = self._later(self._ms("close_ms"), self._open_phase)
+
+    # ---- mouth: center mode
+    def _toward_center(self) -> None:
+        """Drive toward (and through) center from whichever side the jaw is on."""
+        self._timer = None
+        self._drive_mouth(1 if self.closed_side else -1)
+        self._awaiting = True
+        self._arm_timeout()
+
+    def _seek_center(self) -> None:
+        """Drive to the center edge and stop the moment the switch changes."""
+        self._seeking = True
+        self._toward_center()
+
+    def _arm_timeout(self) -> None:
+        if self._timeout:
+            self._timeout.cancel()
+        self._timeout = self._later(self._ms("seek_timeout_ms") or 1.0, self._stuck)
+
+    def _stuck(self) -> None:
+        self._timeout = None
+        log.warning("mouth: center switch not reached within %d ms; stopping the motor (stuck, or switch "
+                    "wired/inverted wrong?)", self.motion.get("seek_timeout_ms", 0))
+        self.halt("safety")
+
+    def _swing(self) -> float:
+        lo, hi = self._ms("swing_min_ms"), self._ms("swing_max_ms")
+        hi = max(hi, lo)
+        return self._rng.uniform(lo, lo + (hi - lo) * self._level)
+
+    def _switch_from_thread(self, pressed: bool) -> None:
+        """lgpio callback thread. When seeking, stop on the crossing without waiting for the loop."""
+        closed_side = pressed != self.cfg.mouth_center_invert
+        if self._seeking and closed_side != self.closed_side:
             self._cut()
         if self._loop:
-            self._loop.call_soon_threadsafe(self.limit_changed, active)
+            self._loop.call_soon_threadsafe(self.center_changed, closed_side)
 
-    def limit_changed(self, active: bool) -> None:
-        if active == self.limit:
+    def center_changed(self, closed_side: bool) -> None:
+        if closed_side == self.closed_side:
             return
-        self.limit = active
-        log.info("mouth limit switch %s", "hit" if active else "released")
-        self.on_change("mouth_limit", float(active), "safety")
-        if not active:
-            self._limit_dir = 0
+        self.closed_side = closed_side
+        if not (self._dir and self._awaiting):
+            return  # moved by hand, coasting, or bounce after this sweep's crossing
+        # Only a crossing in the direction we're driving counts (opening reaches the open side).
+        if (self._dir > 0) == closed_side:
             return
-        if self._backing_off:
-            return  # bounce while leaving the switch
-        # Which way was the jaw going? Driven now, or (if coasting, e.g. sagging under its own
-        # weight after a close) the last way it was driven. Single-pin mode only drives open.
-        heading = self._dir or (self._last_dir if self._hbridge else 0)
-        self._limit_dir = heading
-        self._cancel_timers()
-        secs = self.motion.get("backoff_cycles", 0) * (self._ms("open_ms") + self._ms("close_ms"))
-        if self._hbridge and heading and secs > 0:
-            self._backing_off = True
-            self._drive_mouth(-heading)
-            self._timer = self._later(secs, self._stop_motion)
-        else:
+        self._awaiting = False
+        if self._timeout:
+            self._timeout.cancel()
+            self._timeout = None
+        if self._seeking:
+            self._seeking = False
             self._drive_mouth(0)
-        if self.mouth:
-            self.mouth = False
-            self.on_change("mouth", 0.0, "safety")
+        elif self._flapping:
+            self._timer = self._later(self._swing(), self._toward_center)
 
     def close(self) -> None:
         try:
             self._cancel_timers()
-            self._backing_off = False
             self._drive_mouth(0)
             if self.cfg.eyes_pwm:
                 self._pins.pwm(self.cfg.eyes_pin, 0)

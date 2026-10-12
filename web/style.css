@@ -24,6 +24,7 @@ h3 { font-size: 14px; margin: 14px 0 6px; color: var(--muted); }
 kbd { font: 11px ui-monospace, monospace; padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); }
 .mono, pre { font-family: ui-monospace, monospace; }
 .hidden { display: none !important; }
+.muted { color: var(--muted); font-size: 0.9em; margin: 0.25em 0; }
 .hint { color: var(--muted); font-size: 13px; margin: 4px 0 8px; }
 .error { color: var(--bad); }
 
@@ -60,7 +61,6 @@ button { cursor: pointer; }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: .45; cursor: default; }
 button.on { background: var(--accent); color: #1a0d03; border-color: var(--accent); }
-button.limit { outline: 2px solid var(--bad); outline-offset: 2px; }
 button.big { padding: 12px; font-size: 16px; }
 button.danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 700; }
 button.candy { flex: 1; }
