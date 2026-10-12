@@ -102,3 +102,26 @@ def test_mouth_settings_roundtrip(client):
     assert client.put("/api/mouth", json={"swing_min_ms": 40, "swing_max_ms": 300}).json()["swing_max_ms"] == 300
     assert client.put("/api/lipsync", json={"hang_ms": 500}).json()["hang_ms"] == 500
     assert client.put("/api/mouth", json={"open_ms": 5}).status_code == 422
+
+
+def test_reset_clears_estop_while_board_offline(client):
+    from pumpkin import main
+    assert client.post("/api/estop").status_code == 200
+    assert client.get("/api/state").json()["stepper"]["estopped"] is True
+    main.svc.stepper.connected = False            # board browned out / USB dropped
+    assert client.post("/api/reset").status_code == 200
+    assert client.get("/api/state").json()["stepper"]["estopped"] is False
+
+
+def test_reset_explains_active_estop_input(client, monkeypatch):
+    from pumpkin import main
+    from pumpkin.stepper import StepperError
+    client.post("/api/estop")
+
+    async def refuse(line):
+        raise StepperError("ESTOP")
+    monkeypatch.setattr(main.svc.stepper, "command", refuse)
+    monkeypatch.setattr(main.svc.stepper, "connected", True)
+    r = client.post("/api/reset")
+    assert r.status_code == 400 and "E-stop input" in r.json()["error"]
+    assert client.get("/api/state").json()["stepper"]["estopped"] is True
