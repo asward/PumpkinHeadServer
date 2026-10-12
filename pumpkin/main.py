@@ -88,6 +88,14 @@ class Fx(BaseModel):
     params: dict | None = None
 
 
+class Mouth(BaseModel):
+    flap: bool | None = None
+    open_ms: int | None = Field(None, ge=20, le=2000)
+    close_ms: int | None = Field(None, ge=20, le=2000)
+    end_close_ms: int | None = Field(None, ge=0, le=2000)
+    backoff_cycles: float | None = Field(None, ge=0, le=20)
+
+
 class Lipsync(BaseModel):
     enabled: bool | None = None
     threshold: float | None = Field(None, gt=0, le=1)
@@ -192,6 +200,13 @@ def put_lipsync(body: Lipsync):
     ls = svc.runtime.update("lipsync", body.model_dump(exclude_none=True))
     svc.bus.publish("lipsync", **ls)
     return ls
+
+
+@app.put("/api/mouth")
+def put_mouth(body: Mouth):
+    m = svc.runtime.update("mouth", body.model_dump(exclude_none=True))
+    svc.bus.publish("mouth", **m)
+    return m
 
 
 @app.put("/api/autopilot")

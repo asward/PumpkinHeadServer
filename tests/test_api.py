@@ -90,3 +90,12 @@ def test_manual_mouth_and_eyes(client):
     assert client.post("/api/mouth", json={"value": 1}).json() == {"mouth": True}
     assert client.post("/api/mouth", json={"value": 0}).json() == {"mouth": False}
     assert client.post("/api/eyes", json={"value": 1}).json() == {"eyes": 1.0}
+
+
+def test_mouth_settings_roundtrip(client):
+    r = client.put("/api/mouth", json={"flap": False, "open_ms": 120, "close_ms": 200})
+    assert r.status_code == 200
+    m = r.json()
+    assert (m["flap"], m["open_ms"], m["close_ms"]) == (False, 120, 200)
+    assert client.get("/api/state").json()["mouth"]["close_ms"] == 200
+    assert client.put("/api/mouth", json={"open_ms": 5}).status_code == 422

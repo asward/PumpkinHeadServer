@@ -86,6 +86,7 @@ function onEvent(ev) {
     case 'library': loadLibrary(); break;
     case 'fx': S.state.fx = ev; renderFx(); break;
     case 'lipsync': S.state.lipsync = ev; renderLipsync(); break;
+    case 'mouth': S.state.mouth = ev; renderMouth(); break;
     case 'autopilot': S.state.autopilot = ev; renderAutopilot(); break;
   }
 }
@@ -110,7 +111,7 @@ function applyState(st) {
     h('option', { value: 'custom', textContent: 'custom', disabled: true }));
   $('#gen-template').replaceChildren(
     ...Object.entries(st.templates).map(([k, d]) => h('option', { value: k, textContent: k.replace(/_/g, ' '), title: d })));
-  renderFx(); renderLipsync(); renderAutopilot(); renderRecording(); renderStepperStatus(); renderPlaying();
+  renderFx(); renderLipsync(); renderMouth(); renderAutopilot(); renderRecording(); renderStepperStatus(); renderPlaying();
 }
 
 function setPill(sel, text, cls) {
@@ -199,6 +200,26 @@ const putLipsync = run((body) => api('PUT', '/api/lipsync', body));
 $('#ls-enabled').onchange = () => putLipsync({ enabled: $('#ls-enabled').checked });
 $('#ls-threshold').onchange = () => putLipsync({ threshold: +(0.205 - $('#ls-threshold').value).toFixed(3) });
 $('#ls-max-open').onchange = () => putLipsync({ max_open_ms: +$('#ls-max-open').value });
+
+const MOUTH_SLIDERS = [
+  ['#mouth-open-ms', 'open_ms'], ['#mouth-close-ms', 'close_ms'],
+  ['#mouth-end-close-ms', 'end_close_ms'], ['#mouth-backoff', 'backoff_cycles'],
+];
+function renderMouth() {
+  const m = S.state.mouth;
+  if (!m) return;
+  $('#mouth-flap').checked = m.flap;
+  for (const [sel, key] of MOUTH_SLIDERS) {
+    $(sel).value = m[key];
+    $(sel + '-v').textContent = m[key];
+  }
+}
+const putMouth = run((body) => api('PUT', '/api/mouth', body));
+$('#mouth-flap').onchange = () => putMouth({ flap: $('#mouth-flap').checked });
+for (const [sel, key] of MOUTH_SLIDERS) {
+  $(sel).oninput = () => { $(sel + '-v').textContent = $(sel).value; };
+  $(sel).onchange = () => putMouth({ [key]: +$(sel).value });
+}
 
 const FX_FIELDS = [
   ['pitch', 'Pitch (semitones)', -12, 12, 0.5],
