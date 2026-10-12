@@ -219,8 +219,17 @@ class Services:
                          connected=bool(st and st.connected), estopped=True)
 
     async def reset(self) -> None:
-        if self.stepper:
-            await self.stepper.command("RESET")
+        st = self.stepper
+        if st and st.connected:
+            try:
+                await st.command("RESET")
+            except StepperError as e:
+                if e.code == "ESTOP":
+                    raise ValueError("motor board refused RESET: its E-stop input is still active") from e
+                if e.code != "OFFLINE":
+                    raise
+        # Offline: the board resets when the link reopens, which clears its own latch, so a dropped
+        # link must not leave the server latched with no way out.
         self.estopped = False
         self.bus.publish("stepper", event="RESET", motor=0, tag=0, extra=[],
                          connected=bool(self.stepper and self.stepper.connected), estopped=False)
