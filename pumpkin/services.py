@@ -14,6 +14,7 @@ from .camera import MicHub, VideoHub
 from .clips import ClipStore
 from .generator import TEMPLATES
 from .gpio import Outputs
+from .syllables import level
 from .recorder import Recorder
 from .runtime import RuntimeSettings
 from .sequences import Player, SequenceStore, duration
@@ -29,9 +30,12 @@ class Services:
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
         self.bus = EventBus()
         self.runtime = RuntimeSettings(cfg.data_dir / "settings.json")
-        self.outputs = Outputs(cfg, self._on_output, self.runtime["mouth"],
-                               lambda status: self.bus.publish("mouth_status", status=status))
+        self.outputs = Outputs(cfg, self._on_output, self.runtime["mouth"], self._on_mouth_status)
         self.audio = AudioEngine(cfg)
+        self.audio.speech_params = self._speech_params
+        self.audio.on_speech = self._on_speech
+        self.audio.on_speech_stop = self.cancel_speech
+        self._speech_timers: dict[str, set[asyncio.TimerHandle]] = {}
         self.audio.set_fx(FxParams.from_dict(self.runtime["fx"]["params"]))
         self.clips = ClipStore(cfg.data_dir, cfg.sample_rate)
         self.seqs = SequenceStore(cfg.data_dir)
@@ -78,7 +82,8 @@ class Services:
         st = self.stepper
         return {
             "outputs": {"eyes": self.outputs.eyes, "mouth": self.outputs.mouth,
-                        "mouth_mode": self.outputs.mode, "mouth_status": self.outputs.status},
+                        "mouth_mode": self.outputs.mode, "mouth_status": self.outputs.status,
+                        "mouth_closed_side": self.outputs.closed_side},
             "backends": {"gpio": self.outputs.backend, "audio": self.audio.backend},
             "stepper": {"enabled": st is not None, "connected": bool(st and st.connected),
                         "version": st.version if st else None, "estopped": self.estopped},
@@ -143,7 +148,60 @@ class Services:
     async def stop_all(self) -> None:
         await self.player.stop()
         self.audio.stop()
+        self.cancel_speech()
         self.outputs.halt()
+
+    # ---- mouth: manual control and syllable lip-sync
+    def _on_mouth_status(self, status: str) -> None:
+        self.bus.publish("mouth_status", status=status, closed_side=self.outputs.closed_side)
+
+    def jog_mouth(self, direction: int) -> None:
+        """Open/close buttons. Taking manual control turns lip-sync off."""
+        if direction and self.runtime["lipsync"]["enabled"]:
+            self.set_lipsync({"enabled": False})
+        self.outputs.jog(direction)
+
+    def set_lipsync(self, values: dict) -> dict:
+        was = self.runtime["lipsync"]["enabled"]
+        ls = self.runtime.update("lipsync", values)
+        if ls["enabled"] and not was:
+            self.outputs.center()       # start talking from rest
+        elif not ls["enabled"]:
+            self.cancel_speech()
+        self.bus.publish("lipsync", **ls)
+        return ls
+
+    def _speech_params(self) -> tuple[float, float] | None:
+        ls = self.runtime["lipsync"]
+        if ls["enabled"] and ls.get("mode") == "syllable":
+            return ls["threshold"], ls["gap_ms"]
+        return None
+
+    def _on_speech(self, events, t0: float, tag: str) -> None:
+        """Schedule jaw strokes so each lands lead_ms before its syllable is heard."""
+        loop = asyncio.get_running_loop()
+        ls = self.runtime["lipsync"]
+        thr, lead = ls["threshold"], ls["lead_ms"] / 1000
+        handles = self._speech_timers.setdefault(tag, set())
+        for offset, kind, e in events:
+            at = max(t0 + offset / self.audio.sr - lead, loop.time())
+            if kind == "onset":
+                fn, arg = self.outputs.stroke, level(e, thr)
+            else:
+                fn, arg = self.outputs.set_level, level(e, thr)
+            h = loop.call_at(at, self._fire_speech, tag, fn, arg)
+            handles.add(h)
+
+    def _fire_speech(self, tag: str, fn, arg) -> None:
+        handles = self._speech_timers.get(tag)
+        if handles:
+            handles.difference_update({h for h in handles if h.when() <= asyncio.get_running_loop().time()})
+        fn(arg)
+
+    def cancel_speech(self, tag: str | None = None) -> None:
+        for t in ([tag] if tag else list(self._speech_timers)):
+            for h in self._speech_timers.pop(t, ()):
+                h.cancel()
 
     async def estop(self) -> None:
         st = self.stepper
@@ -215,6 +273,11 @@ class Services:
         while True:
             await asyncio.sleep(0.02)
             ls = self.runtime["lipsync"]
+            if ls["enabled"] and ls.get("mode") == "syllable":
+                if open_:  # just switched from follow mode
+                    open_ = False
+                    self.outputs.set_mouth(False, "lipsync")
+                continue  # driven by syllable events from the audio engine
             if not ls["enabled"]:
                 if open_:
                     open_ = False

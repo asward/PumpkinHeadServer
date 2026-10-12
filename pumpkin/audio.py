@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .syllables import SyllableDetector, detect
 from .voicefx import FxParams, VoiceFX
 
 log = logging.getLogger(__name__)
@@ -43,6 +44,11 @@ class LiveBuffer:
             self._buf = np.concatenate([self._buf, x])
             if len(self._buf) > self._max:
                 self._buf = self._buf[-self._prebuf * 2:]
+
+    @property
+    def buffered(self) -> int:
+        with self._lock:
+            return len(self._buf) if self._primed else max(len(self._buf), self._prebuf)
 
     def read(self, n: int) -> np.ndarray:
         out = np.zeros(n, np.float32)
@@ -76,6 +82,15 @@ class AudioEngine:
         self.fx = VoiceFX(self.sr)
         self.env = 0.0
         self.last_live = 0.0  # monotonic time live audio last arrived
+        # Syllable lip-sync hooks (set by Services):
+        #   speech_params() -> (threshold, gap_ms), or None when syllable lip-sync is off
+        #   on_speech(events, t0, tag): events from syllables.py, t0 = loop time the first
+        #                               analysed sample reaches the speaker
+        #   on_speech_stop(tag): playback with that tag stopped (None = everything)
+        self.speech_params = lambda: None
+        self.on_speech = lambda events, t0, tag: None
+        self.on_speech_stop = lambda tag: None
+        self._live_syllables = SyllableDetector(self.sr)
         self.backend = "null"
         self._voices: list[_Voice] = []
         self._lock = threading.Lock()
@@ -151,9 +166,23 @@ class AudioEngine:
         x = np.frombuffer(pcm, "<i2").astype(np.float32) / 32768.0
         x = resample(x, rate, self.sr)
         if play:
+            ahead = self.live.buffered / self.sr  # queued ahead of this chunk
             self.live.write(self.fx.process(x))
             self.last_live = time.monotonic()
+            params = self.speech_params()
+            if params:
+                # Analyse the dry voice as it arrives: it reaches the speaker only after the
+                # jitter buffer and the output latency, which gives the jaw a head start.
+                events = self._live_syllables.process(x, *params)
+                if events:
+                    self.on_speech(events, self._loop.time() + ahead + self.output_latency, "live")
         return x
+
+    @property
+    def output_latency(self) -> float:
+        """Seconds from mixing a sample to hearing it."""
+        lat = getattr(self._stream, "latency", None) if self._stream else None
+        return float(lat) if isinstance(lat, (int, float)) else self.block / self.sr
 
     @property
     def live_active(self) -> bool:
@@ -166,9 +195,16 @@ class AudioEngine:
 
     def play(self, data: np.ndarray, tag: str = "") -> asyncio.Future:
         """Start a clip. The future resolves True when it finishes, False if stopped."""
-        done = asyncio.get_running_loop().create_future()
+        loop = asyncio.get_running_loop()
+        done = loop.create_future()
+        data = data.astype(np.float32)
         with self._lock:
-            self._voices.append(_Voice(data.astype(np.float32), tag, done))
+            self._voices.append(_Voice(data, tag, done))
+        params = self.speech_params()
+        if params:
+            events = detect(data, self.sr, *params)
+            if events:
+                self.on_speech(events, loop.time() + self.output_latency, tag)
         return done
 
     def stop(self, tag: str | None = None) -> None:
@@ -177,6 +213,7 @@ class AudioEngine:
             self._voices = [v for v in self._voices if v not in stopped]
         for v in stopped:
             _resolve(v.done, False)
+        self.on_speech_stop(tag)
 
 
 def _resolve(fut: asyncio.Future, value) -> None:

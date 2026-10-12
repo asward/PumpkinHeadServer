@@ -103,3 +103,12 @@ def test_mouth_settings_roundtrip(client):
     assert client.put("/api/mouth", json={"swing_min_ms": 40, "swing_max_ms": 300}).json()["swing_max_ms"] == 300
     assert client.put("/api/lipsync", json={"hang_ms": 500}).json()["hang_ms"] == 500
     assert client.put("/api/mouth", json={"open_ms": 5}).status_code == 422
+
+
+def test_jog_endpoint_and_lipsync_mode(client):
+    assert client.put("/api/lipsync", json={"mode": "follow"}).json()["mode"] == "follow"
+    assert client.put("/api/lipsync", json={"mode": "words"}).status_code == 422
+    assert client.post("/api/mouth/jog", json={"direction": 1}).status_code == 200
+    assert client.get("/api/state").json()["lipsync"]["enabled"] is False
+    assert client.post("/api/mouth/jog", json={"direction": 0}).status_code == 200
+    assert client.post("/api/mouth/jog", json={"direction": 2}).status_code == 422

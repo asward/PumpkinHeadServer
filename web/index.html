@@ -51,7 +51,11 @@
       <button id="btn-eyes" class="big">Eyes <kbd>E</kbd></button>
       <button id="btn-mouth" class="big">Mouth (hold) <kbd>M</kbd></button>
     </div>
-    <p id="mouth-status" class="muted hidden"></p>
+    <div class="grid2">
+      <button id="btn-jog-open" title="Hold to open. Turns lip-sync off.">▲ Open</button>
+      <button id="btn-jog-close" title="Hold to close. Turns lip-sync off.">▼ Close</button>
+    </div>
+    <p id="mouth-status" class="muted hidden"><span id="center-lamp" class="lamp"></span> <span id="mouth-status-text"></span></p>
     <label>Eye brightness <input type="range" id="eyes-level" min="0" max="1" step="0.05" value="1"></label>
     <div class="row">
       <button id="btn-dispense" class="big candy">🍬 Dispense <kbd>D</kbd></button>
@@ -72,9 +76,15 @@
     </div>
     <h3>Lip-sync</h3>
     <label class="toggle"><input type="checkbox" id="ls-enabled"> Move mouth with the voice</label>
+    <label>Mode <select id="ls-mode">
+      <option value="syllable">Syllables: one stroke per syllable</option>
+      <option value="follow">Follow volume</option>
+    </select></label>
     <label>Sensitivity <input type="range" id="ls-threshold" min="0.005" max="0.2" step="0.005"></label>
-    <label>Max open (ms) <input type="range" id="ls-max-open" min="100" max="1500" step="50"></label>
-    <label>Back to center after quiet (ms) <input type="range" id="ls-hang" min="0" max="2000" step="50"></label>
+    <label class="ls-follow">Max open (ms) <input type="range" id="ls-max-open" min="100" max="1500" step="50"></label>
+    <label class="ls-syllable">Lead (ms) <input type="range" id="ls-lead" min="0" max="300" step="10"> <output id="ls-lead-v"></output></label>
+    <label class="ls-syllable">Min gap between syllables (ms) <input type="range" id="ls-gap" min="60" max="400" step="10"> <output id="ls-gap-v"></output></label>
+    <label class="ls-follow">Back to center after quiet (ms) <input type="range" id="ls-hang" min="0" max="2000" step="50"></label>
   </div>
 
   <div class="card">

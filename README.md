@@ -101,6 +101,8 @@ A sequence's **Voice** is the live voice-changer setting, a preset, or "as recor
 - The board's host watchdog (`WD`, 1 s by default) halts the motors if the server dies or the USB link drops.
 - The mouth output turns itself off after `PUMPKIN_MOUTH_MAX_ON_MS` so a stuck button can't stall the motor.
 - With a center switch the mouth flaps through center: after each crossing it keeps going for a random time between the UI's min and max swing, then reverses, so it stays centered. Lip-sync scales the swing with the voice volume. When the button is released or the voice goes quiet, the jaw drives back to center and stops the moment the switch changes (the enable pin drops straight from the GPIO callback). If the switch isn't reached within the stuck timeout, the motor stops. E-STOP and stop-all halt the mouth in place.
+- **Lip-sync modes.** *Syllables* (default) fires one jaw stroke per syllable, found as bumps in the 300–3000 Hz speech band, sized by loudness, so the jaw keeps pace with the speaker and rests in pauses. Live talk is analysed as it arrives, before the jitter buffer; voice lines are analysed up front. Each stroke is scheduled *Lead* ms before its syllable is heard, to cover the motor's lag. *Follow volume* is the older open-while-loud behavior.
+- **Open / Close buttons** drive the jaw while held and stop where it is on release (capped by `PUMPKIN_MOUTH_MAX_ON_MS`). Using them turns lip-sync off; turning lip-sync back on returns the jaw to rest (center) first.
 - `PUMPKIN_MOUTH_MAX_ON_MS` cuts a mouth held open (flapping off) so a stuck button can't stall the motor.
 - Raw motor commands from the UI and sequences are limited to the spec's command set. `WD` is reserved for the server.
 

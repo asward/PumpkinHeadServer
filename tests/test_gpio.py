@@ -404,3 +404,107 @@ def test_center_status_stuck():
 def test_timed_mode_has_no_status():
     out, _ = make()
     assert out.status == "" and out._compute_status() == ""
+
+
+# ---- syllable strokes, jog, center
+
+def test_stroke_center_mode_from_closed_side():
+    async def t():
+        out, rec = centered(closed_side=True)
+        out.stroke(1.0)
+        assert rec.level == OPEN and out.status == "talking"
+        out.center_changed(False)                # crossed: swing 30 ms then back
+        await asyncio.sleep(0.05)
+        assert rec.level == CLOSE and out.status == "centering"
+        out.center_changed(True)                 # back at center
+        assert rec.level == STOP and out.status == "centered"
+    run(t())
+
+
+def test_stroke_mid_stroke_restarts_opening():
+    async def t():
+        out, rec = centered(closed_side=False)   # already open side (mid-stroke)
+        out.stroke(0.5)
+        assert rec.level == OPEN
+        await asyncio.sleep(0.05)                # swing elapsed -> head back
+        assert rec.level == CLOSE
+        out.stroke(0.5)                          # next syllable before reaching center
+        assert rec.level == OPEN
+        out.halt()
+    run(t())
+
+
+def test_stroke_ignored_while_button_or_jog():
+    async def t():
+        out, rec = centered()
+        out.set_mouth(True)
+        out.stroke(1.0)
+        assert out._flapping and not out._stroking
+        out.jog(1)
+        out.stroke(1.0)
+        assert not out._stroking and out.status == "opening"
+        out.halt()
+    run(t())
+
+
+def test_stroke_timed_mode():
+    async def t():
+        out, rec = make({"open_ms": 50, "end_close_ms": 30}, mouth_driver="hbridge")
+        out.stroke(0.0)                          # 0.4 x 50 = 20 ms open
+        assert rec.level == OPEN
+        await asyncio.sleep(0.03)
+        assert rec.level == CLOSE
+        await asyncio.sleep(0.04)
+        assert rec.level == STOP and ok(rec)
+    run(t())
+
+
+def test_jog_open_close_stop_and_cap():
+    async def t():
+        out, rec = centered(mouth_max_on_ms=40)
+        out.jog(1)
+        assert rec.level == OPEN and out.status == "opening"
+        out.jog(-1)
+        assert rec.level == CLOSE and out.status == "closing"
+        out.jog(0)
+        assert rec.level == STOP
+        out.jog(1)
+        await asyncio.sleep(0.06)                # capped by max-on
+        assert rec.level == STOP and out._jog == 0
+    run(t())
+
+
+def test_jog_stops_flapping():
+    async def t():
+        changes = []
+        out, rec = centered(changes=changes)
+        out.set_mouth(True)
+        out.jog(-1)
+        assert out.mouth is False and ("mouth", 0.0, "manual") in changes
+        await asyncio.sleep(0.05)
+        assert rec.level == CLOSE                # no flap reversal kept running
+        out.jog(0)
+    run(t())
+
+
+def test_center_command_seeks():
+    async def t():
+        out, rec = centered(closed_side=False)
+        out.center()
+        assert rec.level == CLOSE and out.status == "centering"
+        out.center_changed(True)
+        assert rec.level == STOP and out.status == "centered"
+    run(t())
+
+
+def test_status_published_when_side_changes():
+    async def t():
+        seen = []
+        out, _ = centered(closed_side=True)
+        out.on_status = lambda s: seen.append((s, out.closed_side))
+        out._published = (out._compute_status(), out.closed_side)
+        out.set_mouth(True)
+        out.center_changed(False)                # status stays "flapping", side flips
+        assert seen == [("flapping", True), ("flapping", False)]
+        out.halt()
+    run(t())
