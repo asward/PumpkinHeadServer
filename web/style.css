@@ -25,6 +25,7 @@ kbd { font: 11px ui-monospace, monospace; padding: 1px 4px; border: 1px solid va
 .mono, pre { font-family: ui-monospace, monospace; }
 .hidden { display: none !important; }
 .muted { color: var(--muted); font-size: 0.9em; margin: 0.25em 0; }
+.muted.bad { color: var(--bad); }
 .hint { color: var(--muted); font-size: 13px; margin: 4px 0 8px; }
 .error { color: var(--bad); }
 
