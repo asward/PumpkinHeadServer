@@ -115,6 +115,8 @@ class Outputs:
         self._dir = 0                # direction being driven now: 1 open, -1 close, 0 stopped
         self._level = 1.0            # swing size 0..1 (lip-sync sets it from the voice volume)
         self._flapping = False       # current "on" flaps (vs. holds open)
+        self._stroking = False       # a lip-sync syllable stroke is in progress
+        self._jog = 0                # open/close buttons: 1 opening, -1 closing, 0 not jogging
         self._seeking = False        # center mode: heading for center to stop there
         self._awaiting = False       # center mode: driving toward center, crossing not seen yet
         self._timer: asyncio.TimerHandle | None = None      # flap phase / end close / swing reversal
@@ -124,6 +126,7 @@ class Outputs:
         self._at_center = False      # center mode: stopped on the switch edge by a seek
         self._stuck_flag = False     # center mode: last seek/flap timed out
         self.status = ""             # center mode: what the jaw is doing, for the UI
+        self._published = ("", False)
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -224,10 +227,14 @@ class Outputs:
     def _compute_status(self) -> str:
         if not self.centered:
             return ""
+        if self._jog:
+            return "opening" if self._jog > 0 else "closing"
         if self._seeking:
             return "centering"
         if self._flapping and self.mouth:
             return "flapping"
+        if self._stroking:
+            return "talking"
         if self._stuck_flag:
             return "stuck"
         if self._at_center:
@@ -235,10 +242,17 @@ class Outputs:
         return "closed side" if self.closed_side else "open side"
 
     def _update_status(self) -> None:
-        status = self._compute_status()
-        if status != self.status:
-            self.status = status
-            self.on_status(status)
+        """Notify when the status text or the switch side changes (the UI's center lamp)."""
+        self.status = self._compute_status()
+        if self.centered and (self.status, self.closed_side) != self._published:
+            self._published = (self.status, self.closed_side)
+            self.on_status(self.status)
+
+    def _clear_motion(self) -> None:
+        self._cancel_timers()
+        self._seeking = self._awaiting = self._flapping = self._stroking = False
+        self._at_center = self._stuck_flag = False
+        self._jog = 0
 
     def set_level(self, level: float) -> None:
         """Swing size for the next center-mode reversals, 0..1 (1 = up to swing_max_ms)."""
@@ -249,18 +263,18 @@ class Outputs:
         if on == self.mouth:
             return
         self.mouth = on
-        self._cancel_timers()
-        self._seeking = self._awaiting = False
-        self._at_center = self._stuck_flag = False
+        was_jogging = self._jog
+        self._clear_motion()
         if source != "lipsync":
             self._level = 1.0
         if self.centered:
             if on:
                 self._flapping = True
                 self._toward_center()
-            else:
-                self._flapping = False
+            elif not was_jogging:
                 self._seek_center()
+            else:
+                self._drive_mouth(0)
         elif on:
             self._flapping = (bool(self.motion.get("flap")) and source != "lipsync"
                               and self._ms("open_ms") > 0 and self._ms("close_ms") > 0)
@@ -278,12 +292,74 @@ class Outputs:
 
     def halt(self, source: str = "safety") -> None:
         """Stop the mouth motor where it is (E-stop / stop all / stuck)."""
-        self._cancel_timers()
-        self._seeking = self._flapping = self._awaiting = False
+        stuck = self._stuck_flag
+        self._clear_motion()
+        self._stuck_flag = stuck
         self._drive_mouth(0)
         if self.mouth:
             self.mouth = False
             self.on_change("mouth", 0.0, source)
+        self._update_status()
+
+    def jog(self, direction: int, source: str = "manual") -> None:
+        """Open/close buttons: drive while held (1 open, -1 close), stop where it is on 0.
+        Capped by mouth_max_on_ms so a stuck button can't stall the motor."""
+        direction = (direction > 0) - (direction < 0)
+        self._clear_motion()
+        if self.mouth:
+            self.mouth = False
+            self.on_change("mouth", 0.0, source)
+        self._jog = direction
+        self._drive_mouth(direction if self._hbridge else max(direction, 0))
+        if direction and self.cfg.mouth_max_on_ms:
+            self._max_timer = self._later(self.cfg.mouth_max_on_ms / 1000, self.jog, 0, "safety")
+        self._update_status()
+
+    def center(self) -> None:
+        """Return to rest: the center switch edge in center mode, closed otherwise."""
+        if self.mouth:
+            self.set_mouth(False, "manual")  # already ends at rest
+            return
+        self._clear_motion()
+        if self.centered:
+            self._seek_center()
+        elif self._hbridge and self._ms("end_close_ms"):
+            self._drive_mouth(-1)
+            self._timer = self._later(self._ms("end_close_ms"), self._stop_motion)
+        else:
+            self._drive_mouth(0)
+        self._update_status()
+
+    def stroke(self, level: float) -> None:
+        """One syllable: open, sized by level (0..1), then back to rest. A new syllable
+        mid-stroke restarts the opening. Ignored while the button or jog controls the jaw."""
+        if self.mouth or self._jog:
+            return
+        self._clear_motion()
+        self.set_level(level)
+        self._stroking = True
+        self._drive_mouth(1)
+        if self.centered:
+            if self.closed_side:
+                self._awaiting = True   # swing is timed from the center crossing
+                self._arm_timeout()
+            else:
+                self._timer = self._later(self._swing(), self._end_stroke)
+        else:
+            secs = self._ms("open_ms") * (0.4 + 0.6 * self._level)
+            self._timer = self._later(secs, self._end_stroke)
+        self._update_status()
+
+    def _end_stroke(self) -> None:
+        self._timer = None
+        self._stroking = False
+        if self.centered:
+            self._seek_center()
+        elif self._hbridge and self._ms("end_close_ms"):
+            self._drive_mouth(-1)
+            self._timer = self._later(self._ms("end_close_ms"), self._stop_motion)
+        else:
+            self._drive_mouth(0)
         self._update_status()
 
     def _stop_motion(self) -> None:
@@ -362,6 +438,8 @@ class Outputs:
             self._at_center = True
         elif self._flapping:
             self._timer = self._later(self._swing(), self._toward_center)
+        elif self._stroking:
+            self._timer = self._later(self._swing(), self._end_stroke)
 
     def close(self) -> None:
         try:

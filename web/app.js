@@ -87,7 +87,11 @@ function onEvent(ev) {
     case 'fx': S.state.fx = ev; renderFx(); break;
     case 'lipsync': S.state.lipsync = ev; renderLipsync(); break;
     case 'mouth': S.state.mouth = ev; renderMouth(); break;
-    case 'mouth_status': S.state.outputs.mouth_status = ev.status; renderMouthStatus(); break;
+    case 'mouth_status':
+      S.state.outputs.mouth_status = ev.status;
+      S.state.outputs.mouth_closed_side = ev.closed_side;
+      renderMouthStatus();
+      break;
     case 'autopilot': S.state.autopilot = ev; renderAutopilot(); break;
   }
 }
@@ -135,12 +139,21 @@ function setOutput(name, value) {
 }
 
 function renderMouthStatus() {
-  const status = S.state && S.state.outputs.mouth_status;
+  const out = S.state && S.state.outputs;
+  const status = out && out.mouth_status;
   const el = $('#mouth-status');
   el.classList.toggle('hidden', !status);
-  el.textContent = status ? `Jaw: ${status}` : '';
   el.classList.toggle('bad', status === 'stuck');
+  $('#mouth-status-text').textContent = status ? `Jaw: ${status}` : '';
+  const lamp = $('#center-lamp');
+  lamp.classList.toggle('on', !!(out && out.mouth_closed_side));
+  lamp.title = out && out.mouth_closed_side ? 'Center switch closed: jaw on the closed side'
+                                            : 'Center switch open: jaw on the open side';
 }
+
+const jogMouth = run((direction) => api('POST', '/api/mouth/jog', { direction }));
+holdButton($('#btn-jog-open'), () => jogMouth(1), () => jogMouth(0));
+holdButton($('#btn-jog-close'), () => jogMouth(-1), () => jogMouth(0));
 
 const setEyes = run((v) => api('POST', '/api/eyes', { value: v }));
 const setMouth = run((v) => api('POST', '/api/mouth', { value: v }));
@@ -201,6 +214,13 @@ function renderLipsync() {
   $('#ls-enabled').checked = ls.enabled;
   $('#ls-threshold').value = 0.205 - ls.threshold; // slider right = more sensitive
   $('#ls-max-open').value = ls.max_open_ms;
+  $('#ls-mode').value = ls.mode || 'syllable';
+  $('#ls-lead').value = ls.lead_ms; $('#ls-lead-v').textContent = ls.lead_ms;
+  $('#ls-gap').value = ls.gap_ms; $('#ls-gap-v').textContent = ls.gap_ms;
+  const syl = (ls.mode || 'syllable') === 'syllable';
+  document.querySelectorAll('.ls-syllable').forEach((el) => el.classList.toggle('hidden', !syl));
+  document.querySelectorAll('.ls-follow').forEach((el) => el.classList.toggle('hidden', syl));
+  if (!syl) $('#ls-hang').closest('label').classList.toggle('hidden', S.state.outputs.mouth_mode !== 'center');
   $('#ls-hang').value = ls.hang_ms;
 }
 const putLipsync = run((body) => api('PUT', '/api/lipsync', body));
@@ -208,6 +228,11 @@ $('#ls-enabled').onchange = () => putLipsync({ enabled: $('#ls-enabled').checked
 $('#ls-threshold').onchange = () => putLipsync({ threshold: +(0.205 - $('#ls-threshold').value).toFixed(3) });
 $('#ls-max-open').onchange = () => putLipsync({ max_open_ms: +$('#ls-max-open').value });
 $('#ls-hang').onchange = () => putLipsync({ hang_ms: +$('#ls-hang').value });
+$('#ls-mode').onchange = () => putLipsync({ mode: $('#ls-mode').value });
+for (const [sel, key] of [['#ls-lead', 'lead_ms'], ['#ls-gap', 'gap_ms']]) {
+  $(sel).oninput = () => { $(sel + '-v').textContent = $(sel).value; };
+  $(sel).onchange = () => putLipsync({ [key]: +$(sel).value });
+}
 
 const MOUTH_SLIDERS = [
   ['#mouth-open-ms', 'open_ms'], ['#mouth-close-ms', 'close_ms'], ['#mouth-end-close-ms', 'end_close_ms'],
@@ -219,7 +244,6 @@ function renderMouth() {
   const center = S.state.outputs.mouth_mode === 'center';
   $('#mouth-timed').classList.toggle('hidden', center);
   $('#mouth-center').classList.toggle('hidden', !center);
-  $('#ls-hang').closest('label').classList.toggle('hidden', !center);
   $('#mouth-flap').checked = m.flap;
   for (const [sel, key] of MOUTH_SLIDERS) {
     $(sel).value = m[key];

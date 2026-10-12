@@ -13,6 +13,7 @@ import logging
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -100,6 +101,9 @@ class Mouth(BaseModel):
 
 class Lipsync(BaseModel):
     enabled: bool | None = None
+    mode: Literal["syllable", "follow"] | None = None  # syllable strokes, or follow the volume
+    lead_ms: int | None = Field(None, ge=0, le=500)
+    gap_ms: int | None = Field(None, ge=40, le=1000)
     threshold: float | None = Field(None, gt=0, le=1)
     min_ms: int | None = Field(None, ge=20, le=1000)
     max_open_ms: int | None = Field(None, ge=50, le=5000)
@@ -140,6 +144,17 @@ def get_state():
 async def set_eyes(body: Value):
     svc.outputs.set_eyes(body.value)
     return {"eyes": svc.outputs.eyes}
+
+
+class Jog(BaseModel):
+    direction: Literal[-1, 0, 1]
+
+
+@app.post("/api/mouth/jog")
+async def jog_mouth(body: Jog):
+    """Open/close buttons: 1 opens, -1 closes while held, 0 stops. Turns lip-sync off."""
+    svc.jog_mouth(body.direction)
+    return {"status": svc.outputs.status}
 
 
 @app.post("/api/mouth")
@@ -199,10 +214,8 @@ def put_fx(body: Fx):
 
 
 @app.put("/api/lipsync")
-def put_lipsync(body: Lipsync):
-    ls = svc.runtime.update("lipsync", body.model_dump(exclude_none=True))
-    svc.bus.publish("lipsync", **ls)
-    return ls
+async def put_lipsync(body: Lipsync):
+    return svc.set_lipsync(body.model_dump(exclude_none=True))
 
 
 @app.put("/api/mouth")
