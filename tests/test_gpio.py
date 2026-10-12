@@ -372,3 +372,35 @@ def test_halt_stops_without_closing_move():
         await asyncio.sleep(0.08)
         assert rec.level == {22: False, 27: False}
     run(t())
+
+
+def test_center_status_sequence():
+    async def t():
+        seen = []
+        out, rec = centered(closed_side=False)
+        out.on_status = seen.append
+        out.status = out._compute_status()
+        assert out.status == "open side"
+        out.set_mouth(True)
+        out.set_mouth(False)                     # seeking by closing
+        out.center_changed(True)                 # reached center
+        assert seen == ["flapping", "centering", "centered"]
+        out.center_changed(False)                # nudged by hand
+        assert out.status == "open side"
+    run(t())
+
+
+def test_center_status_stuck():
+    async def t():
+        seen = []
+        out, rec = centered(dict(FIXED, seek_timeout_ms=30))
+        out.on_status = seen.append
+        out.set_mouth(True)
+        await asyncio.sleep(0.05)
+        assert seen[-1] == "stuck"
+    run(t())
+
+
+def test_timed_mode_has_no_status():
+    out, _ = make()
+    assert out.status == "" and out._compute_status() == ""

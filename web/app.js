@@ -87,6 +87,7 @@ function onEvent(ev) {
     case 'fx': S.state.fx = ev; renderFx(); break;
     case 'lipsync': S.state.lipsync = ev; renderLipsync(); break;
     case 'mouth': S.state.mouth = ev; renderMouth(); break;
+    case 'mouth_status': S.state.outputs.mouth_status = ev.status; renderMouthStatus(); break;
     case 'autopilot': S.state.autopilot = ev; renderAutopilot(); break;
   }
 }
@@ -103,6 +104,7 @@ function applyState(st) {
   $('#banner').classList.toggle('hidden', !notes.length);
   setOutput('eyes', st.outputs.eyes);
   setOutput('mouth', st.outputs.mouth);
+  renderMouthStatus();
   $('#btn-listen').disabled = !st.camera.audio;
   $('#btn-listen').title = st.camera.audio ? '' : 'No camera microphone configured (PUMPKIN_CAMERA_AUDIO_DEVICE)';
   $('#fx-preset').replaceChildren(
@@ -130,6 +132,14 @@ function setOutput(name, value) {
   } else if (name === 'mouth') {
     $('#btn-mouth').classList.toggle('on', !!value);
   }
+}
+
+function renderMouthStatus() {
+  const status = S.state && S.state.outputs.mouth_status;
+  const el = $('#mouth-status');
+  el.classList.toggle('hidden', !status);
+  el.textContent = status ? `Jaw: ${status}` : '';
+  el.classList.toggle('bad', status === 'stuck');
 }
 
 const setEyes = run((v) => api('POST', '/api/eyes', { value: v }));

@@ -103,9 +103,11 @@ class Outputs:
     source is one of: manual, lipsync, sequence, safety. Construct and call from the event loop.
     """
 
-    def __init__(self, cfg, on_change: Callable[[str, float, str], None], motion: dict | None = None):
+    def __init__(self, cfg, on_change: Callable[[str, float, str], None], motion: dict | None = None,
+                 on_status: Callable[[str], None] | None = None):
         self.cfg = cfg
         self.on_change = on_change
+        self.on_status = on_status or (lambda status: None)
         self.motion = motion if motion is not None else dict(MOTION_DEFAULTS)
         self.eyes = 0.0
         self.mouth = False
@@ -119,6 +121,9 @@ class Outputs:
         self._timeout: asyncio.TimerHandle | None = None    # center crossing deadline
         self._max_timer: asyncio.TimerHandle | None = None  # mouth_max_on_ms cut-off
         self._rng = random.Random()
+        self._at_center = False      # center mode: stopped on the switch edge by a seek
+        self._stuck_flag = False     # center mode: last seek/flap timed out
+        self.status = ""             # center mode: what the jaw is doing, for the UI
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -131,6 +136,7 @@ class Outputs:
         if self.centered:
             pressed = self._pins.watch_low(cfg.mouth_center_pin, self._switch_from_thread)
             self.closed_side = pressed != cfg.mouth_center_invert
+            self.status = self._compute_status()
 
     @property
     def mode(self) -> str:
@@ -215,6 +221,25 @@ class Outputs:
                 t.cancel()
         self._timer = self._timeout = self._max_timer = None
 
+    def _compute_status(self) -> str:
+        if not self.centered:
+            return ""
+        if self._seeking:
+            return "centering"
+        if self._flapping and self.mouth:
+            return "flapping"
+        if self._stuck_flag:
+            return "stuck"
+        if self._at_center:
+            return "centered"
+        return "closed side" if self.closed_side else "open side"
+
+    def _update_status(self) -> None:
+        status = self._compute_status()
+        if status != self.status:
+            self.status = status
+            self.on_status(status)
+
     def set_level(self, level: float) -> None:
         """Swing size for the next center-mode reversals, 0..1 (1 = up to swing_max_ms)."""
         self._level = min(max(float(level), 0.0), 1.0)
@@ -226,6 +251,7 @@ class Outputs:
         self.mouth = on
         self._cancel_timers()
         self._seeking = self._awaiting = False
+        self._at_center = self._stuck_flag = False
         if source != "lipsync":
             self._level = 1.0
         if self.centered:
@@ -248,6 +274,7 @@ class Outputs:
         else:
             self._drive_mouth(0)
         self.on_change("mouth", float(on), source)
+        self._update_status()
 
     def halt(self, source: str = "safety") -> None:
         """Stop the mouth motor where it is (E-stop / stop all / stuck)."""
@@ -257,6 +284,7 @@ class Outputs:
         if self.mouth:
             self.mouth = False
             self.on_change("mouth", 0.0, source)
+        self._update_status()
 
     def _stop_motion(self) -> None:
         self._timer = None
@@ -292,6 +320,7 @@ class Outputs:
 
     def _stuck(self) -> None:
         self._timeout = None
+        self._stuck_flag = True
         log.warning("mouth: center switch not reached within %d ms; stopping the motor (stuck, or switch "
                     "wired/inverted wrong?)", self.motion.get("seek_timeout_ms", 0))
         self.halt("safety")
@@ -313,6 +342,11 @@ class Outputs:
         if closed_side == self.closed_side:
             return
         self.closed_side = closed_side
+        self._at_center = False
+        self._on_crossing(closed_side)
+        self._update_status()
+
+    def _on_crossing(self, closed_side: bool) -> None:
         if not (self._dir and self._awaiting):
             return  # moved by hand, coasting, or bounce after this sweep's crossing
         # Only a crossing in the direction we're driving counts (opening reaches the open side).
@@ -325,6 +359,7 @@ class Outputs:
         if self._seeking:
             self._seeking = False
             self._drive_mouth(0)
+            self._at_center = True
         elif self._flapping:
             self._timer = self._later(self._swing(), self._toward_center)
 

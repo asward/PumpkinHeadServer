@@ -29,7 +29,8 @@ class Services:
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
         self.bus = EventBus()
         self.runtime = RuntimeSettings(cfg.data_dir / "settings.json")
-        self.outputs = Outputs(cfg, self._on_output, self.runtime["mouth"])
+        self.outputs = Outputs(cfg, self._on_output, self.runtime["mouth"],
+                               lambda status: self.bus.publish("mouth_status", status=status))
         self.audio = AudioEngine(cfg)
         self.audio.set_fx(FxParams.from_dict(self.runtime["fx"]["params"]))
         self.clips = ClipStore(cfg.data_dir, cfg.sample_rate)
@@ -77,7 +78,7 @@ class Services:
         st = self.stepper
         return {
             "outputs": {"eyes": self.outputs.eyes, "mouth": self.outputs.mouth,
-                        "mouth_mode": self.outputs.mode},
+                        "mouth_mode": self.outputs.mode, "mouth_status": self.outputs.status},
             "backends": {"gpio": self.outputs.backend, "audio": self.audio.backend},
             "stepper": {"enabled": st is not None, "connected": bool(st and st.connected),
                         "version": st.version if st else None, "estopped": self.estopped},
