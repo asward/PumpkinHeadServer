@@ -6,6 +6,7 @@ import json
 import logging
 from pathlib import Path
 
+from .gpio import MOTION_DEFAULTS
 from .voicefx import PRESETS, FxParams
 
 log = logging.getLogger(__name__)
@@ -13,6 +14,7 @@ log = logging.getLogger(__name__)
 DEFAULTS = {
     "fx": {"preset": "monster", "params": FxParams.from_dict(PRESETS["monster"]).to_dict()},
     "lipsync": {"enabled": True, "threshold": 0.03, "min_ms": 90, "max_open_ms": 350},
+    "mouth": dict(MOTION_DEFAULTS),
     "autopilot": {"enabled": False, "sequences": [], "min_gap": 20, "max_gap": 60, "order": "random"},
 }
 

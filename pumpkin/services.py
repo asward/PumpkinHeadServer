@@ -29,7 +29,7 @@ class Services:
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
         self.bus = EventBus()
         self.runtime = RuntimeSettings(cfg.data_dir / "settings.json")
-        self.outputs = Outputs(cfg, self._on_output)
+        self.outputs = Outputs(cfg, self._on_output, self.runtime["mouth"])
         self.audio = AudioEngine(cfg)
         self.audio.set_fx(FxParams.from_dict(self.runtime["fx"]["params"]))
         self.clips = ClipStore(cfg.data_dir, cfg.sample_rate)
@@ -85,6 +85,7 @@ class Services:
             "fx": self.runtime["fx"],
             "presets": PRESETS,
             "lipsync": self.runtime["lipsync"],
+            "mouth": self.runtime["mouth"],
             "autopilot": self.runtime["autopilot"],
             "playing": self.player.current,
             "recording": self.recorder.status(),
